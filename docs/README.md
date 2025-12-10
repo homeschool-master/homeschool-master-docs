@@ -1,6 +1,6 @@
 # Homeschool Management App - Documentation
 
-Welcome to the complete documentation for the Homeschool Management SaaS application.
+Welcome to the complete documentation for the Homeschool Management SaaS application. You can also view documentation on [github pages](https://homeschool-master.github.io/homeschool-master-docs/).
 
 ## Table of Contents
 
