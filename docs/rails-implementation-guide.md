@@ -115,7 +115,7 @@ Create/update `config/initializers/cors.rb`:
 ```ruby
 Rails.application.config.middleware.insert_before 0, Rack::Cors do
   allow do
-    origins '*'  # In production, replace with your actual domains
+    origins '*'  # In production, replace with actual domains
     
     resource '*',
       headers: :any,
