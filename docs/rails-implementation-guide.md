@@ -134,7 +134,7 @@ Create `.env` file in project root:
 DATABASE_URL=postgres://localhost/homeschool_api_development
 
 # JWT
-JWT_SECRET_KEY=your-super-secret-key-change-in-production
+JWT_SECRET_KEY=super-secret-key-change-in-production
 JWT_ACCESS_TOKEN_EXPIRY=3600
 JWT_REFRESH_TOKEN_EXPIRY=2592000
 
@@ -142,8 +142,8 @@ JWT_REFRESH_TOKEN_EXPIRY=2592000
 REDIS_URL=redis://localhost:6379/0
 
 # AWS S3 (for file uploads)
-AWS_ACCESS_KEY_ID=your-access-key
-AWS_SECRET_ACCESS_KEY=your-secret-key
+AWS_ACCESS_KEY_ID=access-key
+AWS_SECRET_ACCESS_KEY=secret-key
 AWS_REGION=us-east-1
 AWS_BUCKET=homeschool-app-uploads
 
