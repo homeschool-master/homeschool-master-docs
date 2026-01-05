@@ -1,6 +1,6 @@
-# Homeschool Master - Rails API Implementation Guide (Learning Edition)
+# Homeschool Master - Rails API Implementation Guide
 
-This guide helps you build the Rails API from scratch by understanding concepts, not copying code. You'll research solutions, write your own implementations, and validate your work through testing.
+Technical implementation specification for the Homeschool Master Rails API backend.
 
 ---
 
@@ -20,326 +20,47 @@ This guide helps you build the Rails API from scratch by understanding concepts,
 
 ## Phase 0: Project Foundation
 
-### Concepts to Understand
+### Technical Requirements
 
-**What is an API-only Rails application?**
-- Doesn't serve HTML pages
-- Returns JSON data
-- No views, sessions, or cookies by default
-- Lightweight middleware stack
+**Rails Configuration:**
+- API-only application
+- PostgreSQL database
+- UUID primary keys
+- No test framework (using RSpec separately)
 
-**What are UUIDs and why use them?**
-- Universally unique identifiers instead of incrementing integers
-- Better security (can't guess IDs)
-- Easier database merging
-- Distributed system friendly
+**Required Dependencies:**
+- Password encryption
+- JWT handling
+- CORS middleware
+- Background job processing
+- Caching layer
+- Cloud file storage client
+- Pagination
+- RSpec and factories
+- Code linter
 
-**What is CORS and why does it matter?**
-- Browser security feature that blocks cross-origin requests
-- Your mobile app and API are different origins
-- Must explicitly allow your frontend to access your API
+**PostgreSQL Setup:**
+- Enable UUID extension (pgcrypto)
+- Configure connection pooling
+- Set up development and test databases
 
-<<<<<<< HEAD
-Replace the contents of `Gemfile` with:
+**CORS Configuration:**
+- Allow requests from local development (localhost:8081)
+- Allow requests from production domains
+- Expose headers: Authorization, X-RateLimit-Limit, X-RateLimit-Remaining
+- Allow methods: GET, POST, PUT, PATCH, DELETE, OPTIONS, HEAD
 
-```ruby
-source "https://rubygems.org"
-
-ruby "3.2.2"
-
-# Core
-gem "rails", "~> 7.1.0"
-gem "pg", "~> 1.5"
-gem "puma", ">= 5.0"
-
-# Authentication
-gem "bcrypt", "~> 3.1.7"
-gem "jwt", "~> 2.7"
-
-# API & Serialization
-gem "jbuilder", "~> 2.11"
-gem "rack-cors", "~> 2.0"
-
-# Background Jobs (for emails, etc.)
-gem "sidekiq", "~> 7.1"
-gem "redis", ">= 4.0.1"
-
-# File Uploads
-gem "aws-sdk-s3", "~> 1.136"
-gem "image_processing", "~> 1.12"
-
-# Pagination
-gem "kaminari", "~> 1.2"
-
-# Environment Variables
-gem "dotenv-rails", groups: [:development, :test]
-
-# Timezone data for Windows
-gem "tzinfo-data", platforms: %i[windows jruby]
-
-# Performance
-gem "bootsnap", require: false
-
-group :development, :test do
-  gem "debug", platforms: %i[mri windows]
-  gem "rspec-rails", "~> 6.0"
-  gem "factory_bot_rails", "~> 6.2"
-  gem "faker", "~> 3.2"
-  gem "pry-rails"
-end
-
-group :development do
-  gem "annotate", "~> 3.2"
-  gem "rubocop-rails", require: false
-end
-
-group :test do
-  gem "shoulda-matchers", "~> 5.3"
-  gem "database_cleaner-active_record", "~> 2.1"
-end
-```
-
-### 0.3 Install Dependencies
-
-```bash
-bundle install
-```
-
-### 0.4 Setup Database
-
-```bash
-# Create databases
-rails db:create
-```
-
-### 0.5 Configure CORS
-
-Create/update `config/initializers/cors.rb`:
-
-```ruby
-Rails.application.config.middleware.insert_before 0, Rack::Cors do
-  allow do
-    origins '*'  # In production, replace with actual domains
-    
-    resource '*',
-      headers: :any,
-      methods: [:get, :post, :put, :patch, :delete, :options, :head],
-      expose: ['Authorization', 'X-RateLimit-Limit', 'X-RateLimit-Remaining']
-  end
-end
-```
-
-### 0.6 Create Environment Variables
-
-Create `.env` file in project root:
-
-```bash
-# Database
-DATABASE_URL=postgres://localhost/homeschool_api_development
-
-# JWT
-JWT_SECRET_KEY=super-secret-key-change-in-production
-JWT_ACCESS_TOKEN_EXPIRY=3600
-JWT_REFRESH_TOKEN_EXPIRY=2592000
-
-# Redis
-REDIS_URL=redis://localhost:6379/0
-
-# AWS S3 (for file uploads)
-AWS_ACCESS_KEY_ID=access-key
-AWS_SECRET_ACCESS_KEY=secret-key
-AWS_REGION=us-east-1
-AWS_BUCKET=homeschool-app-uploads
-
-# App
-APP_HOST=http://localhost:3000
-FRONTEND_URL=http://localhost:8081
-```
-
-### 0.7 Setup RSpec
-
-```bash
-rails generate rspec:install
-```
-
-### 0.8 Create Base API Structure
-
-Create the following directory structure:
-
-```bash
-mkdir -p app/controllers/api/v1
-mkdir -p app/services
-mkdir -p app/serializers
-```
-
-### 0.9 Create Base API Controller
-
-Create `app/controllers/api/v1/base_controller.rb`:
-
-```ruby
-module Api
-  module V1
-    class BaseController < ApplicationController
-      include ActionController::HttpAuthentication::Token::ControllerMethods
-      
-      before_action :authenticate_request
-      
-      attr_reader :current_teacher
-      
-      private
-      
-      def authenticate_request
-        token = extract_token_from_header
-        
-        if token.nil?
-          render_unauthorized("Missing authentication token")
-          return
-        end
-        
-        decoded = JwtService.decode(token)
-        
-        if decoded.nil?
-          render_unauthorized("Invalid or expired token")
-          return
-        end
-        
-        @current_teacher = Teacher.find_by(id: decoded[:teacher_id])
-        
-        if @current_teacher.nil?
-          render_unauthorized("Teacher not found")
-          return
-        end
-        
-        unless @current_teacher.is_active?
-          render_unauthorized("Account is deactivated")
-        end
-      end
-      
-      def extract_token_from_header
-        header = request.headers['Authorization']
-        return nil unless header
-        
-        header.split(' ').last
-      end
-      
-      def render_success(data, status: :ok, meta: nil)
-        response = { success: true, data: data }
-        response[:meta] = meta if meta.present?
-        render json: response, status: status
-      end
-      
-      def render_created(data)
-        render_success(data, status: :created)
-      end
-      
-      def render_no_content
-        head :no_content
-      end
-      
-      def render_error(message, code: "ERROR", status: :bad_request, details: nil)
-        response = {
-          success: false,
-          error: {
-            code: code,
-            message: message
-          }
-        }
-        response[:error][:details] = details if details.present?
-        render json: response, status: status
-      end
-      
-      def render_unauthorized(message = "Unauthorized")
-        render_error(message, code: "UNAUTHORIZED", status: :unauthorized)
-      end
-      
-      def render_forbidden(message = "Forbidden")
-        render_error(message, code: "FORBIDDEN", status: :forbidden)
-      end
-      
-      def render_not_found(resource = "Resource")
-        render_error("#{resource} not found", code: "NOT_FOUND", status: :not_found)
-      end
-      
-      def render_validation_errors(model)
-        render_error(
-          "Validation failed",
-          code: "VALIDATION_ERROR",
-          status: :unprocessable_entity,
-          details: model.errors.messages
-        )
-      end
-      
-      def paginate(collection)
-        paginated = collection.page(params[:page]).per(params[:limit] || 20)
-        
-        {
-          data: paginated,
-          meta: {
-            page: paginated.current_page,
-            limit: paginated.limit_value,
-            total: paginated.total_count,
-            total_pages: paginated.total_pages,
-            has_next: !paginated.last_page?,
-            has_prev: !paginated.first_page?
-          }
-        }
-      end
-    end
-  end
-end
-```
-
-### 0.10 Configure Routes Base
-
-Update `config/routes.rb`:
-
-```ruby
-Rails.application.routes.draw do
-  namespace :api do
-    namespace :v1 do
-      # Authentication (no auth required)
-      namespace :auth do
-        post 'register', to: 'authentication#register'
-        post 'login', to: 'authentication#login'
-        post 'refresh', to: 'authentication#refresh'
-        post 'logout', to: 'authentication#logout'
-        post 'password/reset-request', to: 'passwords#reset_request'
-        post 'password/reset', to: 'passwords#reset'
-        post 'password/change', to: 'passwords#change'
-        post 'email/verify', to: 'email_verification#verify'
-        post 'email/resend-verification', to: 'email_verification#resend'
-      end
-      
-      # Protected routes will be added here
-    end
-  end
-  
-  # Health check
-  get '/health', to: proc { [200, {}, ['OK']] }
-end
-```
-
-### ✅ Phase 0 Checklist
-
-- [ ] Created Rails API project
-- [ ] Updated Gemfile and installed gems
-- [ ] Created databases
-- [ ] Configured CORS
-- [ ] Created .env file
-- [ ] Setup RSpec
-- [ ] Created directory structure
-- [ ] Created BaseController
-- [ ] Configured routes base
-=======
-**Environment variables - why not hardcode secrets?**
-- Different values for development/production
-- Keep secrets out of version control
-- Easy to change without code changes
->>>>>>> 0b783d9 (update implementation plan.)
+**Environment Variables:**
+- Database connection strings
+- JWT secret key
+- JWT expiration times (access: 3600s, refresh: 2592000s)
+- Redis connection
+- AWS S3 credentials and bucket
+- Application host URLs
 
 ---
 
-### Architecture Overview
+### Architecture
 
 ```
 ┌─────────────────────────────────────────────────────┐
@@ -365,173 +86,130 @@ end
 
 ---
 
-### What to Build
+### Base Controller Implementation
 
-**1. Initialize Rails Project**
+**Location:** `app/controllers/api/v1/base_controller.rb`
 
-Research how to create a Rails project that:
-- Only serves API requests (no views)
-- Uses PostgreSQL as the database
-- Skips the default test framework (you'll use RSpec)
+**Functionality:**
+- Inherit from ApplicationController
+- Run authentication before all actions
+- Provide `current_teacher` accessor to child controllers
+- Implement authentication logic:
+  - Extract token from Authorization header
+  - Decode and verify JWT
+  - Load teacher from token payload
+  - Verify teacher exists and is active
+  - Return 401 for invalid/missing/expired tokens
 
-**2. Configure Dependencies**
+**Response Helpers:**
+- `render_success(data, status: :ok, meta: nil)` - Success responses with optional metadata
+- `render_created(data)` - 201 responses
+- `render_no_content` - 204 responses
+- `render_error(message, code:, status:, details: nil)` - Error responses
+- `render_unauthorized(message)` - 401 responses
+- `render_forbidden(message)` - 403 responses
+- `render_not_found(resource)` - 404 responses
+- `render_validation_errors(model)` - 422 responses with model errors
 
-Your application needs gems for:
-- Password encryption (research bcrypt)
-- JSON Web Token handling (research JWT libraries)
-- Cross-origin resource sharing
-- Background job processing
-- Caching layer
-- Cloud file storage
-- Pagination
-- Testing framework and factories
-- Code quality checking
+**Pagination Helper:**
+- `paginate(collection)` - Returns paginated data with metadata
+- Metadata includes: page, limit, total, total_pages, has_next, has_prev
+- Default limit: 20 items per page
 
-Don't just install these - understand what each does and why you need it.
-
-**3. Enable UUID Support**
-
-PostgreSQL needs an extension to generate UUIDs. Research:
-- What extension enables UUID generation in PostgreSQL
-- How to enable extensions in Rails migrations
-- Why this must happen before creating any tables
-
-**4. Configure CORS**
-
-Your API must allow requests from:
-- Local development server (where your React Native app runs)
-- Production mobile app domain
-- Future web application
-
-Research:
-- How to configure CORS in Rails
-- What headers need to be allowed
-- What HTTP methods should be permitted
-- Which headers should be exposed to the frontend
-
-**5. Set Up Environment Variables**
-
-Create a template for environment variables including:
-- Database connection details
-- Secret keys for token generation
-- Token expiration times
-- Redis connection (for caching/jobs)
-- Cloud storage credentials
-- Application URLs
-
-Research best practices for managing environment variables in Rails.
-
-**6. Create Base API Structure**
-
-Design a base controller that all API endpoints will inherit from. This controller should handle:
-- Authentication checks before any action runs
-- Making the authenticated user available to child controllers
-- Standardized JSON response formatting for success and errors
-- Consistent error handling
-- Pagination helpers
-
-Think about:
-- Where should this controller live in your file structure?
-- What should it inherit from?
-- How can you skip authentication for certain endpoints (like login)?
+**Authentication Skip:**
+- Child controllers can skip authentication with `skip_before_action :authenticate_request`
 
 ---
 
-### What to Test
+### Routes Structure
 
-**Project Setup Tests:**
-- Can the Rails server start without errors?
-- Can you connect to PostgreSQL?
-- Are all required gems installed?
-- Does the database support UUID generation?
+**Namespace:** `/api/v1`
 
-**CORS Tests:**
-- Can you make a cross-origin request to the API?
-- Are the correct headers returned?
-- Are credentials properly handled?
+**Public Routes (no authentication):**
+- POST `/auth/register`
+- POST `/auth/login`
+- POST `/auth/refresh`
+- POST `/auth/logout`
+- POST `/auth/password/reset-request`
+- POST `/auth/password/reset`
+- POST `/auth/email/verify`
+- POST `/auth/email/resend-verification`
 
-**Base Controller Tests:**
-- Does it reject requests without authentication tokens?
-- Does it properly format success responses?
-- Does it properly format error responses?
-- Does it handle different HTTP status codes correctly?
-- Can specific endpoints skip authentication?
+**Protected Routes (authentication required):**
+- All other endpoints require valid JWT access token
+- Token provided in Authorization header: `Bearer <token>`
+
+**Health Check:**
+- GET `/health` - No authentication required
+
+---
+
+### Testing Requirements
+
+**Project Setup:**
+- Rails server starts successfully
+- PostgreSQL connection works
+- UUID generation enabled
+- All gems installed
+
+**CORS:**
+- Cross-origin requests succeed
+- Correct headers returned
+- Credentials handled properly
+
+**Base Controller:**
+- Rejects requests without tokens
+- Rejects requests with invalid tokens
+- Rejects requests with expired tokens
+- Accepts requests with valid tokens
+- Sets current_teacher correctly
+- Response formatters return correct JSON structure
+- Pagination returns correct metadata
 
 ---
 
 ### Validation Checklist
 
-- [ ] Rails server starts on port 3000
-- [ ] PostgreSQL database exists and is accessible
-- [ ] UUID extension is enabled in PostgreSQL
-- [ ] CORS responds with proper headers
-- [ ] Environment variables load from .env file
-- [ ] Base controller structure exists
-- [ ] Can make a test API request and get JSON response
-- [ ] Code passes linter checks
-
----
-
-### Research Resources
-
-**Topics to explore:**
-- Rails API-only applications
-- PostgreSQL extensions and UUIDs
-- CORS and preflight requests
-- Rails before_action callbacks
-- Rails service objects pattern
-- Environment variable management
-- Rails concerns and modules
-
-**Where to look:**
-- Rails API documentation
-- PostgreSQL documentation
-- RubyGems.org for available libraries
-- Rails guides on API-only applications
+- [ ] Rails project initialized in API mode
+- [ ] PostgreSQL configured
+- [ ] UUID extension enabled
+- [ ] All required gems in Gemfile
+- [ ] CORS configured
+- [ ] Environment variables template created
+- [ ] Base controller implemented
+- [ ] Routes namespace configured
+- [ ] Server starts without errors
+- [ ] Can make test request and receive JSON response
+- [ ] Linter configured
 
 ---
 
 ## Phase 1: Authentication System
 
-### Concepts to Understand
+### Technical Requirements
 
-**What is JWT and how does it work?**
-- JSON Web Token - a way to transmit information securely
-- Three parts: header, payload, signature
-- Stateless - server doesn't store tokens
-- Self-contained - all info is in the token
+**JWT Configuration:**
+- Algorithm: HS256 (HMAC-SHA256)
+- Access token expiry: 1 hour
+- Refresh token expiry: 30 days
+- Include expiration (exp) and issued-at (iat) claims
+- Refresh tokens include unique identifier (jti)
 
-**Why two types of tokens?**
-- Access tokens: short-lived (1 hour), used for API requests
-- Refresh tokens: long-lived (30 days), used to get new access tokens
-- If access token is stolen, it expires quickly
-- If refresh token is stolen and user logs out, it becomes invalid
+**Password Security:**
+- Bcrypt hashing
+- Minimum 8 characters
+- Validation on creation and update
 
-**How does password hashing work?**
-- Never store plain-text passwords
-- One-way function - can't reverse the hash
-- Same password + different salt = different hash
-- Slow algorithm to prevent brute force attacks
-
-**What is a JWT ID (jti)?**
-- Unique identifier for each token
-- Allows tracking individual tokens in database
-- Enables token revocation (logout)
-- Critical for refresh tokens
+**Token Storage:**
+- Access tokens: Not stored (stateless)
+- Refresh tokens: Stored in database with jti
+- Enable token revocation via database
 
 ---
 
-### Architecture: Authentication Flow
+### Architecture
 
-**Simple Flow:**
-```
-User → Login → Server checks credentials → Generate tokens → Return tokens
-User → API request with access token → Server verifies → Return data
-User → Refresh request with refresh token → Server verifies → Return new access token
-User → Logout → Server revokes refresh token → Success
-```
-
-**Detailed Login Sequence:**
+**Authentication Flow:**
 ```
 ┌──────┐                    ┌──────┐                   ┌──────────┐
 │Client│                    │ API  │                   │ Database │
@@ -564,14 +242,14 @@ User → Logout → Server revokes refresh token → Success
    │<──────────────────────────│                            │
 ```
 
-**Detailed Authenticated Request Sequence:**
+**Authenticated Request Flow:**
 ```
 ┌──────┐                    ┌──────┐                   ┌──────────┐
 │Client│                    │ API  │                   │ Database │
 └──┬───┘                    └──┬───┘                   └────┬─────┘
    │                           │                            │
    │ GET /students             │                            │
-   │ Header: Authorization:    │                            │
+   │ Authorization:            │                            │
    │ Bearer {access_token}     │                            │
    │──────────────────────────>│                            │
    │                           │                            │
@@ -599,397 +277,436 @@ User → Logout → Server revokes refresh token → Success
 
 ---
 
-### What to Build
+### Database Schema
 
-**1. Token Service**
+**Teachers Table:**
 
-Create a service that handles all token operations:
+| Column | Type | Constraints |
+|--------|------|-------------|
+| id | uuid | Primary key |
+| first_name | string | Not null |
+| last_name | string | Not null |
+| nickname | string | Nullable |
+| email | string | Not null, unique |
+| phone | string | Nullable |
+| newsletter_subscribed | boolean | Default: false |
+| password_digest | string | Not null |
+| profile_image_url | string | Nullable |
+| email_verified_at | datetime | Nullable |
+| email_verification_token | string | Unique, nullable |
+| password_reset_token | string | Unique, nullable |
+| password_reset_sent_at | datetime | Nullable |
+| is_active | boolean | Default: true |
+| created_at | datetime | Not null |
+| updated_at | datetime | Not null |
 
-**Token encoding:**
-- Take a data payload (like teacher ID)
-- Add an expiration timestamp
-- Add an issued-at timestamp
-- Sign the payload with a secret key
-- Return the encoded token string
-
-**Refresh token encoding:**
-- Include teacher ID
-- Mark token type as "refresh"
-- Add expiration (much longer than access token)
-- Add issued-at timestamp
-- Generate and include a unique identifier
-- Sign and return
-
-**Token decoding:**
-- Take an encoded token string
-- Verify the signature matches
-- Check if token has expired
-- Extract and return the payload
-- Handle errors gracefully (expired, invalid, malformed)
-
-**Refresh token decoding:**
-- Decode the token
-- Verify it's marked as a refresh token type
-- Return the payload or nothing if invalid
-
-Research:
-- What library can handle JWT encoding/decoding in Ruby?
-- How to handle cryptographic signing?
-- What algorithm is secure for JWT signing?
-- How to structure error handling for token operations?
+**Indexes:**
+- email (unique)
+- email_verification_token (unique)
+- password_reset_token (unique)
+- is_active
 
 ---
 
-**2. Teacher Model**
+**Refresh Tokens Table:**
 
-Create a model representing teachers with:
+| Column | Type | Constraints |
+|--------|------|-------------|
+| id | uuid | Primary key |
+| teacher_id | uuid | Foreign key, not null |
+| token | string | Not null, unique |
+| jti | string | Not null, unique |
+| expires_at | datetime | Not null |
+| revoked_at | datetime | Nullable |
+| created_at | datetime | Not null |
+| updated_at | datetime | Not null |
 
-**Authentication:**
-- Secure password storage (never plain text)
-- Password validation (minimum length, presence)
-- Email uniqueness enforcement
-- Case-insensitive email lookup
+**Indexes:**
+- teacher_id
+- token (unique)
+- jti (unique)
 
-**Email Verification:**
-- Token generation for email verification
-- Timestamp tracking when email was verified
-- Method to verify email and clear token
-- Method to check if email is verified
+**Foreign Keys:**
+- teacher_id references teachers(id)
 
-**Password Reset:**
-- Token generation for password reset
-- Timestamp tracking when reset was requested
-- Method to check if reset token is still valid (time limit)
-- Method to clear reset token after use
+---
 
-**Utility Methods:**
-- Combine first and last name
-- Display name (nickname or full name)
-- Find teacher by email (case insensitive)
+### JWT Service Implementation
+
+**Location:** `app/services/jwt_service.rb`
+
+**Methods:**
+
+`encode(payload, exp: nil)`
+- Add expiration to payload (default from ENV or 3600 seconds)
+- Add issued-at timestamp
+- Sign with secret key from ENV
+- Return JWT string
+
+`encode_refresh_token(teacher_id)`
+- Create payload with teacher_id, type: 'refresh', unique jti
+- Set expiration from ENV (default 2592000 seconds)
+- Add issued-at timestamp
+- Sign with secret key
+- Return JWT string
+
+`decode(token)`
+- Verify signature
+- Check expiration
+- Return payload hash
+- Return nil on JWT::ExpiredSignature
+- Return nil on JWT::DecodeError
+
+`decode_refresh_token(token)`
+- Decode token
+- Verify type is 'refresh'
+- Return payload or nil
+
+**Private Methods:**
+
+`secret_key`
+- Fetch from ENV['JWT_SECRET_KEY']
+- Fallback to Rails credentials secret_key_base
+
+`access_token_expiry`
+- Current time + ENV['JWT_ACCESS_TOKEN_EXPIRY'] seconds
+
+`refresh_token_expiry`
+- Current time + ENV['JWT_REFRESH_TOKEN_EXPIRY'] seconds
+
+---
+
+### Teacher Model
+
+**Location:** `app/models/teacher.rb`
+
+**Functionality:**
+- Use has_secure_password for password handling
+- Downcase email before save
+- Generate email verification token before create
+
+**Validations:**
+- first_name: presence, max length 100
+- last_name: presence, max length 100
+- nickname: max length 100, optional
+- email: presence, uniqueness (case insensitive), format (email regex)
+- password: presence on create, minimum length 8
+- phone: max length 20, optional
 
 **Associations:**
-Will relate to students, calendar events, assignments, etc. (built in later phases)
+- has_many :students, dependent: :destroy
+- has_many :calendar_events, dependent: :destroy
+- has_many :assignments, dependent: :destroy
+- has_many :tasks, dependent: :destroy
+- has_many :report_cards, dependent: :destroy
+- has_many :expenses, dependent: :destroy
+- has_many :subjects, dependent: :destroy
+- has_many :lesson_plans, dependent: :destroy
+- has_many :expense_categories, dependent: :destroy
+- has_many :refresh_tokens, dependent: :destroy
 
-Research:
-- How does Rails handle password hashing?
-- What validations does Rails provide?
-- How to generate secure random tokens?
-- How to implement email format validation?
+**Scopes:**
+- active: `where(is_active: true)`
+- verified: `where.not(email_verified_at: nil)`
 
----
+**Instance Methods:**
 
-**3. Refresh Token Model**
+`full_name`
+- Return "#{first_name} #{last_name}"
 
-Create a model to track long-lived refresh tokens:
+`display_name`
+- Return nickname if present, otherwise full_name
 
-**Storage:**
-- Link to teacher who owns the token
-- Store the token string
-- Store the unique identifier
-- Store expiration timestamp
-- Store revocation timestamp (if revoked)
+`email_verified?`
+- Return true if email_verified_at is present
 
-**Validation:**
-- Token must exist and be unique
-- Unique identifier must exist and be unique
-- Expiration must be set
+`verify_email!`
+- Set email_verified_at to current time
+- Clear email_verification_token
+- Save
 
-**Queries:**
-- Find active tokens (not revoked, not expired)
-- Find valid token by token string
+`generate_password_reset_token!`
+- Generate secure random token (32 bytes, URL-safe base64)
+- Set password_reset_sent_at to current time
+- Save
 
-**Actions:**
-- Mark token as revoked
-- Revoke all tokens for a specific teacher
+`password_reset_token_valid?`
+- Return false if token or timestamp missing
+- Return true if timestamp within last 2 hours
 
-Research:
-- How to set up model associations in Rails?
-- How to write database scopes for filtering?
-- How to validate uniqueness?
+`clear_password_reset_token!`
+- Clear password_reset_token and password_reset_sent_at
+- Save
 
----
+**Class Methods:**
 
-**4. Database Migrations**
+`find_by_email(email)`
+- Find by downcased email
 
-Create migrations for:
+**Private Methods:**
 
-**Teachers table:**
-- UUID primary key
-- Name fields (first, last, nickname)
-- Email (unique, indexed)
-- Phone (optional)
-- Password hash
-- Newsletter subscription flag
-- Profile image URL
-- Email verification token and timestamp
-- Password reset token and timestamp
-- Active/inactive flag
-- Automatic timestamps
+`downcase_email`
+- Set email to lowercase
 
-**Refresh tokens table:**
-- UUID primary key
-- Reference to teacher (foreign key)
-- Token string (unique, indexed)
-- Unique identifier (unique, indexed)
-- Expiration timestamp
-- Revocation timestamp
-- Automatic timestamps
+`generate_email_verification_token`
+- Generate secure random token (32 bytes, URL-safe base64)
 
-Research:
-- How to enable UUID primary keys in Rails migrations?
-- How to add indexes for better query performance?
-- How to add foreign key constraints?
-- Why index certain columns?
+`password_required?`
+- True if new record or password present
 
 ---
 
-**5. Authentication Controller**
+### Refresh Token Model
 
-Create controller endpoints for:
+**Location:** `app/models/refresh_token.rb`
 
-**Registration:**
-- Accept name, email, password
-- Validate input
-- Check email isn't already registered
-- Create teacher account
+**Associations:**
+- belongs_to :teacher
+
+**Validations:**
+- token: presence, uniqueness
+- jti: presence, uniqueness
+- expires_at: presence
+
+**Scopes:**
+- active: `where(revoked_at: nil).where('expires_at > ?', Time.current)`
+
+**Instance Methods:**
+
+`expired?`
+- Return true if expires_at <= current time
+
+`revoked?`
+- Return true if revoked_at present
+
+`valid_token?`
+- Return true if not expired and not revoked
+
+`revoke!`
+- Set revoked_at to current time
+- Save
+
+**Class Methods:**
+
+`find_valid_by_token(token)`
+- Find in active scope by token
+
+`revoke_all_for_teacher(teacher_id)`
+- Update all tokens for teacher, set revoked_at
+
+---
+
+### Authentication Controller
+
+**Location:** `app/controllers/api/v1/authentication_controller.rb`
+
+**Configuration:**
+- Skip authentication for: register, login, refresh
+
+**Endpoints:**
+
+`POST /api/v1/auth/register`
+- Accept: first_name, last_name, email, password
+- Validate all required fields
+- Check email uniqueness
+- Create teacher
 - Generate email verification token
-- Return success with teacher info
-- Handle validation errors
+- Return 201 with teacher data (exclude password_digest)
+- Return 422 with validation errors
 
-**Login:**
-- Accept email and password
+`POST /api/v1/auth/login`
+- Accept: email, password
 - Find teacher by email
-- Verify password is correct
+- Verify password
 - Check account is active
 - Generate access token
-- Generate refresh token
+- Generate refresh token with jti
 - Store refresh token in database
-- Return both tokens to client
-- Handle invalid credentials
+- Return 200 with access_token and refresh_token
+- Return 401 for invalid credentials
+- Return 401 for inactive account
 
-**Token Refresh:**
-- Accept refresh token
-- Verify token is valid
-- Check token hasn't been revoked
-- Check token hasn't expired
+`POST /api/v1/auth/refresh`
+- Accept: refresh_token
+- Decode refresh token
+- Find refresh token in database by jti
+- Verify not revoked
+- Verify not expired
 - Generate new access token
-- Return new access token
-- Handle invalid/expired tokens
+- Return 200 with new access_token
+- Return 401 for invalid/expired/revoked token
 
-**Logout:**
-- Accept refresh token
-- Find token in database
-- Mark as revoked
-- Return success
-- Handle missing/invalid tokens
+`POST /api/v1/auth/logout`
+- Accept: refresh_token
+- Decode refresh token
+- Find in database
+- Revoke token
+- Return 204
+- Return 401 for invalid token
 
-**Email Verification:**
-- Accept verification token from email link
-- Find teacher with that token
-- Mark email as verified
-- Clear verification token
-- Return success
-- Handle invalid/expired tokens
+`POST /api/v1/auth/email/verify`
+- Accept: token
+- Find teacher by email_verification_token
+- Verify email
+- Return 200 with success message
+- Return 400 for invalid token
 
-**Password Reset Request:**
-- Accept email address
+`POST /api/v1/auth/email/resend-verification`
+- Requires authentication
+- Generate new verification token
+- Save to current teacher
+- Return 200 with success message
+
+`POST /api/v1/auth/password/reset-request`
+- Accept: email
 - Find teacher by email
-- Generate reset token
-- Store token with timestamp
-- Send reset email (simulate for now)
-- Return success
-- Handle teacher not found
+- Generate password reset token
+- Return 200 (always, for security)
 
-**Password Reset:**
-- Accept reset token and new password
-- Find teacher with that token
-- Verify token is still valid (time limit)
+`POST /api/v1/auth/password/reset`
+- Accept: token, password
+- Find teacher by password_reset_token
+- Verify token valid (not expired)
 - Update password
 - Clear reset token
-- Return success
-- Handle invalid/expired tokens
+- Return 200 with success message
+- Return 400 for invalid/expired token
 
-**Password Change:**
-- Accept current password and new password
-- Verify current password is correct
+`POST /api/v1/auth/password/change`
+- Requires authentication
+- Accept: current_password, new_password
+- Verify current password
 - Update to new password
-- Return success
-- Handle incorrect current password
-
-Research:
-- How to organize controller actions?
-- How to handle strong parameters in Rails?
-- How to skip authentication for public endpoints?
-- How to return consistent JSON responses?
-- Proper HTTP status codes for different scenarios
+- Return 200 with success message
+- Return 401 for incorrect current password
 
 ---
 
-### What to Test
+### Testing Requirements
 
-**Token Service Tests:**
-- Can encode a payload into a valid token
-- Encoded token contains the correct payload when decoded
-- Access tokens expire after the configured time
-- Refresh tokens expire after the configured time
-- Decoding returns nothing for expired tokens
-- Decoding returns nothing for tokens with invalid signatures
-- Decoding returns nothing for malformed tokens
-- Refresh tokens include a unique identifier
+**JWT Service:**
+- Encodes payload into valid JWT
+- Decoded token contains original payload
+- Access tokens expire after configured time
+- Refresh tokens expire after configured time
+- Returns nil for expired tokens
+- Returns nil for invalid signatures
+- Returns nil for malformed tokens
+- Refresh tokens include jti
 
-**Teacher Model Tests:**
-- Cannot create teacher without required fields
+**Teacher Model:**
+- Cannot create without required fields
 - Email must be unique (case insensitive)
 - Email must be valid format
-- Password must meet minimum length
-- Password is hashed, not stored in plain text
-- Can find teacher by email (case insensitive)
-- Email verification token is generated on creation
-- Can verify email and clear token
+- Password must be at least 8 characters
+- Password is hashed, not stored as plain text
+- Can find by email (case insensitive)
+- Email verification token generated on creation
+- Can verify email
 - Can generate password reset token
-- Reset token expires after time limit
-- Can check if email is verified
-- Full name combines first and last name
-- Display name uses nickname if present, otherwise full name
+- Reset token expires after 2 hours
+- full_name combines first and last
+- display_name returns nickname or full_name
 
-**Refresh Token Model Tests:**
+**Refresh Token Model:**
 - Cannot create without required fields
-- Token string must be unique
-- Unique identifier must be unique
-- Can find active tokens (not revoked, not expired)
-- Revoked tokens are not included in active scope
-- Expired tokens are not included in active scope
-- Can revoke a single token
-- Can revoke all tokens for a teacher
+- Token must be unique
+- JTI must be unique
+- Active scope excludes revoked tokens
+- Active scope excludes expired tokens
+- Can revoke token
+- Can revoke all for teacher
+- Validation methods work correctly
 
-**Authentication Controller Tests:**
+**Authentication Controller:**
 
-*Registration:*
-- Can register with valid credentials
-- Returns error for duplicate email
-- Returns error for invalid email format
-- Returns error for weak password
-- Returns error for missing required fields
-- Creates teacher in database
-- Generates email verification token
+*Register:*
+- Creates teacher with valid data
+- Returns 422 for duplicate email
+- Returns 422 for invalid email
+- Returns 422 for weak password
+- Returns 422 for missing fields
+- Generates verification token
 
 *Login:*
-- Can login with correct credentials
-- Returns access and refresh tokens
-- Returns error for wrong password
-- Returns error for non-existent email
-- Returns error for inactive account
+- Returns tokens for valid credentials
+- Returns 401 for wrong password
+- Returns 401 for non-existent email
+- Returns 401 for inactive account
 - Stores refresh token in database
 
-*Token Refresh:*
-- Can get new access token with valid refresh token
-- Returns error for invalid refresh token
-- Returns error for expired refresh token
-- Returns error for revoked refresh token
+*Refresh:*
+- Returns new access token with valid refresh token
+- Returns 401 for invalid refresh token
+- Returns 401 for expired refresh token
+- Returns 401 for revoked refresh token
 
 *Logout:*
-- Can logout with valid refresh token
-- Marks refresh token as revoked
-- Returns error for invalid token
-- Multiple logouts don't cause errors
+- Revokes refresh token
+- Returns 204 for valid token
+- Returns 401 for invalid token
 
 *Email Verification:*
-- Can verify email with valid token
-- Marks email as verified
-- Clears verification token
-- Returns error for invalid token
-- Returns error for already verified email
-
-*Password Reset Request:*
-- Can request reset with valid email
-- Generates reset token
-- Returns success for non-existent email (security)
-- Token has expiration
+- Verifies email with valid token
+- Returns 400 for invalid token
+- Can resend verification
 
 *Password Reset:*
-- Can reset password with valid token
-- Clears reset token after use
-- Returns error for expired token
-- Returns error for invalid token
+- Generates reset token
+- Always returns 200 (security)
+- Can reset with valid token
+- Returns 400 for expired token
+- Token expires after 2 hours
 
 *Password Change:*
-- Can change password with correct current password
-- Returns error for incorrect current password
+- Changes password with correct current password
+- Returns 401 for wrong current password
 - Requires authentication
-- New password must meet requirements
 
 ---
 
 ### Validation Checklist
 
-- [ ] Token service can encode and decode tokens
-- [ ] Access tokens expire after 1 hour
-- [ ] Refresh tokens expire after 30 days
-- [ ] Teacher model encrypts passwords
-- [ ] Email validation works correctly
-- [ ] Email verification flow works
-- [ ] Password reset flow works
-- [ ] Can register a new teacher account
-- [ ] Can login with correct credentials
-- [ ] Login returns both token types
-- [ ] Can use access token to authenticate requests
-- [ ] Can refresh access token with refresh token
-- [ ] Can logout and revoke refresh token
-- [ ] Cannot use revoked refresh token
+- [ ] JWT service implemented
+- [ ] Token encoding/decoding works
+- [ ] Access tokens expire correctly
+- [ ] Refresh tokens expire correctly
+- [ ] Teacher model created with password encryption
+- [ ] Email validations work
+- [ ] Email verification flow implemented
+- [ ] Password reset flow implemented
+- [ ] Refresh token model created
+- [ ] Registration endpoint works
+- [ ] Login endpoint returns tokens
+- [ ] Refresh endpoint works
+- [ ] Logout endpoint revokes tokens
+- [ ] Cannot use revoked tokens
+- [ ] Password reset works
+- [ ] Password change works
 - [ ] All authentication tests pass
-
----
-
-### Research Resources
-
-**Topics to explore:**
-- JWT structure and security
-- bcrypt password hashing
-- Token-based authentication vs sessions
-- Why refresh tokens need database storage
-- Secure random token generation
-- Time-based token expiration
-- Rails has_secure_password
-- Rails validations
-- Rails callbacks
-- ActiveRecord associations
 
 ---
 
 ## Phase 2: Student Management
 
-### Concepts to Understand
+### Technical Requirements
 
-**What is a one-to-many relationship?**
-- One teacher has many students
-- Each student belongs to one teacher
-- Database enforces referential integrity with foreign keys
-- Deleting parent can cascade to children
+**Data Model:**
+- Students belong to teachers (one-to-many)
+- Soft deletion (archived_at timestamp)
+- Foreign key constraints enforced
 
-**What is soft deletion?**
-- Don't actually delete records from database
-- Mark them as archived/deleted with a timestamp
-- Preserve data for history and reporting
-- Can be "undeleted" if needed
-
-**Why validate at both model and database level?**
-- Model validations give friendly error messages
-- Database constraints prevent bad data even if validations are bypassed
-- Belt and suspenders approach for data integrity
+**Validation:**
+- Model-level validations for user feedback
+- Database-level constraints for data integrity
 
 ---
 
-### Architecture: Student Data Model
+### Architecture
 
 ```
 ┌─────────────────────────────────────┐
 │           teachers                   │
-│─────────────────────────────────────│
-│ id (uuid)                            │
-│ first_name                           │
-│ last_name                            │
-│ email                                │
-│ ...                                  │
 └──────────────┬──────────────────────┘
                │
                │ has_many
@@ -1020,211 +737,239 @@ Research:
 
 ---
 
-### What to Build
+### Database Schema
 
-**1. Student Model**
+**Students Table:**
 
-Create a model for students with:
-
-**Data Fields:**
-- Names (first, last, optional nickname)
-- Date of birth
-- Current grade level
-- Free-form notes field
-- Soft deletion timestamp
-
-**Associations:**
-- Belongs to a teacher
-- Cannot exist without a teacher
-
-**Validations:**
-- Required fields must be present
-- Names have maximum lengths
-- Date of birth must be in the past
-- Grade level must be valid (research typical grade ranges)
-- Teacher must exist
-
-**Scopes:**
-- Active students (not archived)
-- Archived students
-- Students in a specific grade
-- Students ordered by name
-
-**Methods:**
-- Full name combination
-- Display name (nickname or full name)
-- Calculate age from date of birth
-- Archive student (soft delete)
-- Restore archived student
-- Check if archived
-
-Research:
-- How to implement soft deletion in Rails?
-- How to write custom validations?
-- How to validate foreign key existence?
-- How to calculate age from date of birth in Ruby?
-
----
-
-**2. Database Migration**
-
-Create migration for students table:
-
-**Columns:**
-- UUID primary key
-- Teacher foreign key (UUID)
-- Name fields
-- Date of birth
-- Grade level
-- Notes (text field)
-- Archived timestamp
-- Automatic timestamps
+| Column | Type | Constraints |
+|--------|------|-------------|
+| id | uuid | Primary key |
+| teacher_id | uuid | Foreign key, not null |
+| first_name | string | Not null |
+| last_name | string | Not null |
+| nickname | string | Nullable |
+| date_of_birth | date | Not null |
+| grade_level | string | Not null |
+| notes | text | Nullable |
+| archived_at | datetime | Nullable |
+| created_at | datetime | Not null |
+| updated_at | datetime | Not null |
 
 **Indexes:**
-- Teacher ID (for fast teacher lookup)
-- Archived timestamp (for soft delete queries)
-- Composite index on teacher + archived (for filtered queries)
+- teacher_id
+- archived_at
+- Composite: teacher_id + archived_at
 
-**Constraints:**
-- Foreign key to teachers
-- Not null on required fields
-- Check constraint on date of birth (must be past)
+**Foreign Keys:**
+- teacher_id references teachers(id)
 
-Research:
-- How to add foreign key constraints?
-- What is a composite index and when to use it?
-- How to add check constraints in PostgreSQL?
+**Check Constraints:**
+- date_of_birth must be in the past
 
 ---
 
-**3. Students Controller**
+### Student Model
 
-Create CRUD endpoints:
+**Location:** `app/models/student.rb`
 
-**List Students:**
-- Show all active students for authenticated teacher
+**Associations:**
+- belongs_to :teacher
+
+**Validations:**
+- first_name: presence, max length 100
+- last_name: presence, max length 100
+- nickname: max length 100, optional
+- date_of_birth: presence, must be in past
+- grade_level: presence
+- teacher: must exist
+
+**Scopes:**
+- active: `where(archived_at: nil)`
+- archived: `where.not(archived_at: nil)`
+- by_grade: `where(grade_level: level)`
+- alphabetical: `order(:last_name, :first_name)`
+
+**Instance Methods:**
+
+`full_name`
+- Return "#{first_name} #{last_name}"
+
+`display_name`
+- Return nickname if present, otherwise full_name
+
+`age`
+- Calculate from date_of_birth to current date
+- Return integer years
+
+`archive!`
+- Set archived_at to current time
+- Save
+
+`restore!`
+- Clear archived_at
+- Save
+
+`archived?`
+- Return true if archived_at present
+
+---
+
+### Students Controller
+
+**Location:** `app/controllers/api/v1/students_controller.rb`
+
+**Configuration:**
+- All actions require authentication
+- Verify student belongs to current_teacher
+
+**Endpoints:**
+
+`GET /api/v1/students`
+- Filter by grade_level (optional)
+- Search by name (optional)
+- Return only active students by default
 - Support pagination
-- Support filtering by grade
-- Support searching by name
-- Return count and pagination metadata
+- Return count and metadata
 
-**Get Single Student:**
+**Query Parameters:**
+- grade: filter by grade level
+- search: search in first_name, last_name, nickname
+- page: page number
+- limit: items per page
+
+**Response:**
+```json
+{
+  "data": [...],
+  "meta": {
+    "page": 1,
+    "limit": 20,
+    "total": 45,
+    "total_pages": 3,
+    "has_next": true,
+    "has_prev": false
+  }
+}
+```
+
+`GET /api/v1/students/:id`
 - Find student by ID
-- Verify student belongs to authenticated teacher
+- Verify belongs to current_teacher
 - Return student details
-- Handle not found
+- Return 404 if not found
+- Return 403 if belongs to different teacher
 
-**Create Student:**
-- Accept student details
-- Link to authenticated teacher
+`POST /api/v1/students`
+- Accept: first_name, last_name, nickname, date_of_birth, grade_level, notes
+- Link to current_teacher
 - Validate all fields
-- Return created student
-- Handle validation errors
+- Return 201 with created student
+- Return 422 with validation errors
 
-**Update Student:**
+`PATCH /api/v1/students/:id`
+- Accept: first_name, last_name, nickname, date_of_birth, grade_level, notes
 - Find student by ID
-- Verify ownership
+- Verify belongs to current_teacher
 - Update allowed fields
 - Validate changes
-- Return updated student
-- Handle validation errors
+- Return 200 with updated student
+- Return 404 if not found
+- Return 403 if wrong teacher
+- Return 422 with validation errors
 
-**Archive Student:**
+`POST /api/v1/students/:id/archive`
 - Find student by ID
-- Verify ownership
-- Mark as archived with timestamp
-- Return success
-- Handle already archived
+- Verify belongs to current_teacher
+- Set archived_at
+- Return 200 with success message
+- Return 404 if not found
+- Return 403 if wrong teacher
+- Return 400 if already archived
 
-**Restore Student:**
-- Find archived student by ID
-- Verify ownership
-- Clear archived timestamp
-- Return success
-- Handle not archived
-
-Research:
-- How to implement authorization (checking ownership)?
-- How to structure controller actions?
-- How to handle pagination in Rails?
-- How to implement search functionality?
-- Difference between update and patch?
+`POST /api/v1/students/:id/restore`
+- Find student by ID (including archived)
+- Verify belongs to current_teacher
+- Clear archived_at
+- Return 200 with success message
+- Return 404 if not found
+- Return 403 if wrong teacher
+- Return 400 if not archived
 
 ---
 
-### What to Test
+### Testing Requirements
 
-**Student Model Tests:**
-- Cannot create student without teacher
-- Cannot create student without required fields
-- Names have appropriate length limits
-- Date of birth must be in the past
-- Can calculate age correctly
-- Full name combines correctly
-- Display name uses nickname if available
+**Student Model:**
+- Cannot create without teacher
+- Cannot create without required fields
+- Names have max length limits
+- Date of birth must be in past
+- Age calculation correct
+- full_name combines correctly
+- display_name uses nickname if available
 - Can archive student
 - Archived students not in active scope
 - Can restore archived student
-- Scope filters by grade level correctly
+- Grade level scope filters correctly
 
-**Students Controller Tests:**
+**Students Controller:**
 
 *List:*
-- Returns only authenticated teacher's students
+- Returns only current_teacher's students
 - Returns only active students by default
 - Pagination works correctly
-- Returns metadata (page, total, etc.)
+- Metadata accurate
 - Can filter by grade level
 - Can search by name
 - Requires authentication
 
 *Show:*
 - Returns student details
-- Returns error if student doesn't belong to teacher
-- Returns error for non-existent student
+- Returns 403 for other teacher's student
+- Returns 404 for non-existent student
 - Requires authentication
 
 *Create:*
-- Can create student with valid data
-- Student is linked to authenticated teacher
-- Returns error for missing required fields
-- Returns error for invalid date of birth
+- Can create with valid data
+- Student linked to current_teacher
+- Returns 422 for missing fields
+- Returns 422 for invalid date of birth
 - Returns created student data
 - Requires authentication
 
 *Update:*
-- Can update student fields
-- Returns error if student doesn't belong to teacher
-- Returns error for invalid data
-- Cannot change teacher ID
+- Can update fields
+- Returns 403 for other teacher's student
+- Returns 422 for invalid data
+- Cannot change teacher_id
 - Requires authentication
 
 *Archive:*
 - Can archive student
-- Student no longer appears in active list
-- Can still be retrieved by ID
-- Returns error if already archived
+- Student not in active list
+- Can still retrieve by ID
+- Returns 400 if already archived
 - Requires authentication
 
 *Restore:*
 - Can restore archived student
-- Student appears in active list again
-- Returns error if not archived
+- Student appears in active list
+- Returns 400 if not archived
 - Requires authentication
 
 ---
 
 ### Validation Checklist
 
-- [ ] Student model exists with all fields
-- [ ] Student belongs to teacher association works
+- [ ] Student model created with all fields
+- [ ] Student belongs_to teacher association works
 - [ ] Validations prevent invalid data
-- [ ] Soft deletion works correctly
+- [ ] Soft deletion implemented
 - [ ] Can create students via API
 - [ ] Can list students with pagination
 - [ ] Can update student details
 - [ ] Can archive and restore students
-- [ ] Students are filtered by teacher
+- [ ] Students filtered by teacher
 - [ ] Search functionality works
 - [ ] All student tests pass
 
@@ -1232,29 +977,26 @@ Research:
 
 ## Phase 3: Calendar & Events
 
-### Concepts to Understand
+### Technical Requirements
 
-**What makes a good calendar data model?**
-- Events have start and end times
-- Events can be all-day or specific times
-- Events can recur (daily, weekly, monthly)
-- Need to query events by date range efficiently
+**Data Model:**
+- Events belong to teachers
+- Polymorphic association (can link to students, assignments, lesson plans)
+- Support for all-day events
+- Support for recurring events
+- Timezone-aware timestamps
 
-**What is polymorphic association?**
-- An event can belong to different types of records
-- Could be linked to a student, assignment, or just general
-- One association that works for multiple model types
-- Requires type and ID columns
-
-**How do timezones work in databases?**
-- Always store in UTC in database
-- Convert to user's timezone for display
-- User's timezone should be configurable
-- Rails handles conversion automatically if set up correctly
+**Event Types:**
+- lesson
+- field_trip
+- appointment
+- holiday
+- meeting
+- other
 
 ---
 
-### Architecture: Calendar System
+### Architecture
 
 ```
 ┌─────────────────────┐
@@ -1283,231 +1025,238 @@ Research:
          Can link to:                  │
          ┌─────────────────────────────┘
          │
-         ├──► Student (field trip for one student)
-         ├──► Assignment (assignment due date)
-         └──► Lesson Plan (scheduled lesson)
+         ├──► Student
+         ├──► Assignment
+         └──► Lesson Plan
 ```
 
 ---
 
-### What to Build
+### Database Schema
 
-**1. Calendar Event Model**
+**Calendar Events Table:**
 
-Create a model for calendar events with:
-
-**Data Fields:**
-- Title and description
-- Start and end timestamps
-- All-day flag
-- Event type (lesson, field trip, appointment, holiday, etc.)
-- Recurrence rule (for repeating events)
-- Link to teacher
-- Optional link to related record (polymorphic)
-
-**Associations:**
-- Belongs to teacher
-- Optionally belongs to student, assignment, or lesson plan
-
-**Validations:**
-- Title is required
-- Start time is required
-- End time must be after start time
-- Event type must be valid
-- Teacher must exist
-
-**Scopes:**
-- Events in a date range
-- Events of a specific type
-- All-day events
-- Recurring events
-- Events for a specific student
-
-**Methods:**
-- Check if event is currently happening
-- Check if event is all day
-- Calculate duration
-- Check if event recurs
-- Generate occurrences for recurring events
-
-Research:
-- How to implement polymorphic associations in Rails?
-- How to store and query date ranges?
-- How to implement enum fields in Rails?
-- How to handle recurring events (research iCal RRULE)?
-- How to work with time zones in Rails?
-
----
-
-**2. Database Migration**
-
-Create migration for calendar events table:
-
-**Columns:**
-- UUID primary key
-- Teacher foreign key
-- Title and description
-- Start and end timestamps (with timezone)
-- All-day boolean
-- Event type string
-- Recurrence rule text (JSON or string)
-- Polymorphic type and ID
-- Automatic timestamps
+| Column | Type | Constraints |
+|--------|------|-------------|
+| id | uuid | Primary key |
+| teacher_id | uuid | Foreign key, not null |
+| title | string | Not null |
+| description | text | Nullable |
+| start_time | datetime | Not null |
+| end_time | datetime | Nullable |
+| all_day | boolean | Default: false |
+| event_type | string | Not null |
+| recurrence_rule | text | Nullable |
+| eventable_type | string | Nullable |
+| eventable_id | uuid | Nullable |
+| created_at | datetime | Not null |
+| updated_at | datetime | Not null |
 
 **Indexes:**
-- Teacher ID
-- Start time (for date range queries)
-- Composite index on teacher + start time
-- Polymorphic type and ID
+- teacher_id
+- start_time
+- Composite: teacher_id + start_time
+- Composite: eventable_type + eventable_id
 
-Research:
-- How to index timestamp columns for range queries?
-- How to store JSON data in PostgreSQL?
-- How to add polymorphic foreign keys?
+**Foreign Keys:**
+- teacher_id references teachers(id)
+
+**Valid Event Types:**
+- lesson
+- field_trip
+- appointment
+- holiday
+- meeting
+- other
 
 ---
 
-**3. Calendar Events Controller**
+### Calendar Event Model
 
-Create endpoints:
+**Location:** `app/models/calendar_event.rb`
 
-**List Events:**
-- Filter by date range (required)
-- Filter by event type
-- Filter by student (if linked)
+**Associations:**
+- belongs_to :teacher
+- belongs_to :eventable, polymorphic: true, optional: true
+
+**Validations:**
+- title: presence, max length 200
+- start_time: presence
+- end_time: must be after start_time (if present)
+- event_type: presence, inclusion in valid types
+- teacher: must exist
+
+**Scopes:**
+- between_dates: `where('start_time >= ? AND start_time <= ?', start_date, end_date)`
+- by_type: `where(event_type: type)`
+- all_day: `where(all_day: true)`
+- recurring: `where.not(recurrence_rule: nil)`
+- for_student: `where(eventable_type: 'Student', eventable_id: student_id)`
+
+**Instance Methods:**
+
+`happening_now?`
+- Return true if current time between start_time and end_time
+
+`all_day?`
+- Return all_day value
+
+`duration`
+- Return difference between end_time and start_time (in seconds)
+- Return nil if no end_time
+
+`recurring?`
+- Return true if recurrence_rule present
+
+---
+
+### Calendar Events Controller
+
+**Location:** `app/controllers/api/v1/calendar_events_controller.rb`
+
+**Configuration:**
+- All actions require authentication
+- Verify event belongs to current_teacher
+
+**Endpoints:**
+
+`GET /api/v1/calendar_events`
+- Required: start_date, end_date (for date range)
+- Optional: event_type, student_id
+- Return events in date range
+- Include associated records (eventable)
 - Support pagination
-- Return with related records included
-- Expand recurring events into instances
 
-**Get Single Event:**
+**Query Parameters:**
+- start_date: ISO 8601 date (required)
+- end_date: ISO 8601 date (required)
+- event_type: filter by type
+- student_id: filter by linked student
+- page: page number
+- limit: items per page
+
+`GET /api/v1/calendar_events/:id`
 - Find event by ID
-- Verify ownership
-- Include related records
-- Handle not found
+- Verify belongs to current_teacher
+- Include eventable record
+- Return 404 if not found
+- Return 403 if wrong teacher
 
-**Create Event:**
-- Accept event details
-- Link to authenticated teacher
-- Optionally link to student/assignment
+`POST /api/v1/calendar_events`
+- Accept: title, description, start_time, end_time, all_day, event_type, recurrence_rule, eventable_type, eventable_id
+- Link to current_teacher
 - Validate times
-- Return created event
-- Handle validation errors
+- Return 201 with created event
+- Return 422 with validation errors
 
-**Update Event:**
+`PATCH /api/v1/calendar_events/:id`
+- Accept: title, description, start_time, end_time, all_day, event_type, recurrence_rule, eventable_type, eventable_id
 - Find event by ID
-- Verify ownership
-- Update allowed fields
+- Verify belongs to current_teacher
+- Update fields
 - Validate changes
-- Return updated event
-- Handle recurring event updates (this instance vs all instances)
+- Return 200 with updated event
+- Return 404 if not found
+- Return 403 if wrong teacher
+- Return 422 with validation errors
 
-**Delete Event:**
+`DELETE /api/v1/calendar_events/:id`
 - Find event by ID
-- Verify ownership
-- Delete from database
-- Handle recurring event deletion (this instance vs all instances)
-
-Research:
-- How to efficiently query date ranges?
-- How to expand recurring events?
-- How to handle "update all" vs "update one" for series?
-- How to include associated records in JSON?
+- Verify belongs to current_teacher
+- Delete event
+- Return 204
+- Return 404 if not found
+- Return 403 if wrong teacher
 
 ---
 
-### What to Test
+### Testing Requirements
 
-**Calendar Event Model Tests:**
+**Calendar Event Model:**
 - Cannot create without teacher
 - Cannot create without title
-- Cannot create without start time
+- Cannot create without start_time
 - End time must be after start time
-- All-day events don't require specific times
+- All-day events work correctly
 - Event type validation works
 - Can link to student (polymorphic)
-- Can filter events by date range
-- Recurring events are identified correctly
+- Date range filtering works
+- Recurring events identified correctly
 - Duration calculation works
 
-**Calendar Events Controller Tests:**
+**Calendar Events Controller:**
 
 *List:*
 - Returns events in date range
-- Returns only authenticated teacher's events
+- Returns only current_teacher's events
 - Can filter by event type
 - Can filter by student
 - Pagination works
-- Recurring events expand correctly
 - Includes related records
+- Requires date range parameters
 - Requires authentication
 
 *Show:*
 - Returns event details
 - Includes linked records
-- Returns error for other teacher's event
+- Returns 403 for other teacher's event
 - Requires authentication
 
 *Create:*
-- Can create event with valid data
+- Can create with valid data
 - Can create all-day event
 - Can link to student
-- Returns error for end before start
-- Returns error for missing required fields
+- Returns 422 for end before start
+- Returns 422 for missing fields
 - Requires authentication
 
 *Update:*
-- Can update event fields
+- Can update fields
 - Cannot change teacher
-- End time validation still applies
-- Can update recurring event
+- Time validation still applies
 - Requires authentication
 
 *Delete:*
 - Can delete event
-- Event no longer appears in list
-- Returns error for non-existent event
+- Event removed from list
+- Returns 404 for non-existent
 - Requires authentication
 
 ---
 
 ### Validation Checklist
 
-- [ ] Calendar event model exists
+- [ ] Calendar event model created
 - [ ] Polymorphic associations work
-- [ ] Date range queries are efficient
+- [ ] Date range queries efficient
 - [ ] Can create events via API
 - [ ] Can list events for date range
 - [ ] Can filter events by type
-- [ ] All-day events work correctly
+- [ ] All-day events work
 - [ ] Can link events to students
-- [ ] Event validation prevents invalid data
+- [ ] Validation prevents invalid data
 - [ ] All calendar tests pass
 
 ---
 
 ## Phase 4: Assignments & Tasks
 
-### Concepts to Understand
+### Technical Requirements
 
-**Difference between assignments and tasks?**
-- Assignments: Given to students, have due dates, tracked for completion
-- Tasks: Teacher's personal to-do items, not linked to students
-- Different models but similar structure
+**Data Models:**
+- Assignments: Given to students, tracked for completion
+- Tasks: Teacher's personal to-do items
+- Join table: Links students to assignments with status
 
-**What is a join table?**
-- Links two models in many-to-many relationship
-- An assignment can have many students
-- A student can have many assignments
-- Join table tracks which students have which assignments
-
-**How to track completion status?**
-- Join table can store additional data
-- Not just "does relationship exist" but "what's the status"
-- Completed date, grade, notes all in join table
+**Assignment Tracking:**
+- Status: not_started, in_progress, completed, graded
+- Completion timestamp
+- Grade/score
+- Teacher notes
 
 ---
 
-### Architecture: Assignments and Tasks
+### Architecture
 
 ```
 ┌──────────────┐
@@ -1546,268 +1295,392 @@ Research:
 
 ---
 
-### What to Build
+### Database Schema
 
-**1. Assignment Model**
+**Assignments Table:**
 
-Create model for assignments with:
-
-**Data Fields:**
-- Title and description
-- Subject area
-- Due date
-- Estimated time to complete
-- Instructions or requirements
-- Link to teacher
-
-**Associations:**
-- Belongs to teacher
-- Has many students through join table
-- Optionally belongs to a subject
-
-**Validations:**
-- Title required
-- Due date required
-- Subject must be valid
-- Teacher must exist
-
-**Scopes:**
-- Upcoming assignments
-- Past due assignments
-- Assignments due in a date range
-- Assignments for a subject
-
-**Methods:**
-- Check if overdue
-- Count students assigned
-- Count students completed
-- Completion percentage
-
----
-
-**2. Student Assignment Model (Join Table)**
-
-Create join table model with:
-
-**Data Fields:**
-- Link to student
-- Link to assignment
-- Status (not started, in progress, completed, graded)
-- Completion timestamp
-- Grade or score
-- Teacher notes
-
-**Validations:**
-- Student and assignment required
-- Unique combination of student + assignment
-- Status must be valid value
-- Grade must be in valid range (if present)
-
-**Scopes:**
-- Completed assignments
-- Graded assignments
-- Not started assignments
-- Assignments for a specific student
-
-**Methods:**
-- Mark as completed
-- Mark as graded
-- Check if overdue
-
----
-
-**3. Task Model**
-
-Create model for teacher tasks with:
-
-**Data Fields:**
-- Title and description
-- Due date
-- Priority level
-- Status
-- Link to teacher
-
-**Associations:**
-- Belongs to teacher
-
-**Validations:**
-- Title required
-- Priority must be valid
-- Status must be valid
-
-**Scopes:**
-- Incomplete tasks
-- High priority tasks
-- Due today
-- Overdue tasks
-
-**Methods:**
-- Mark as complete
-- Check if overdue
-
----
-
-**4. Database Migrations**
-
-Create migrations for:
-
-**Assignments table:**
-- UUID primary key
-- Teacher foreign key
-- Title, description
-- Subject
-- Due date
-- Estimated time
-- Instructions
-- Timestamps
-
-**Student assignments table:**
-- UUID primary key
-- Student foreign key
-- Assignment foreign key
-- Status
-- Completed timestamp
-- Grade
-- Notes
-- Timestamps
-
-**Tasks table:**
-- UUID primary key
-- Teacher foreign key
-- Title, description
-- Due date
-- Priority
-- Status
-- Timestamps
+| Column | Type | Constraints |
+|--------|------|-------------|
+| id | uuid | Primary key |
+| teacher_id | uuid | Foreign key, not null |
+| title | string | Not null |
+| description | text | Nullable |
+| subject | string | Nullable |
+| due_date | datetime | Not null |
+| estimated_time | integer | Minutes, nullable |
+| instructions | text | Nullable |
+| created_at | datetime | Not null |
+| updated_at | datetime | Not null |
 
 **Indexes:**
-- Teacher IDs on all tables
-- Due dates for sorting
-- Status columns for filtering
-- Composite indexes for common queries
-
-Research:
-- How to create join tables in Rails?
-- How to add enum columns?
-- Best practices for indexing foreign keys?
+- teacher_id
+- due_date
+- subject
 
 ---
 
-**5. Assignments Controller**
+**Student Assignments Table (Join):**
 
-Create endpoints:
+| Column | Type | Constraints |
+|--------|------|-------------|
+| id | uuid | Primary key |
+| student_id | uuid | Foreign key, not null |
+| assignment_id | uuid | Foreign key, not null |
+| status | string | Not null, default: 'not_started' |
+| completed_at | datetime | Nullable |
+| grade | decimal(5,2) | Nullable |
+| notes | text | Nullable |
+| created_at | datetime | Not null |
+| updated_at | datetime | Not null |
 
-**List Assignments:**
-- Filter by subject
-- Filter by date range
-- Include completion statistics
+**Indexes:**
+- student_id
+- assignment_id
+- Composite: student_id + assignment_id (unique)
+- status
+
+**Foreign Keys:**
+- student_id references students(id)
+- assignment_id references assignments(id)
+
+**Valid Status Values:**
+- not_started
+- in_progress
+- completed
+- graded
+
+---
+
+**Tasks Table:**
+
+| Column | Type | Constraints |
+|--------|------|-------------|
+| id | uuid | Primary key |
+| teacher_id | uuid | Foreign key, not null |
+| title | string | Not null |
+| description | text | Nullable |
+| due_date | datetime | Nullable |
+| priority | string | Not null, default: 'medium' |
+| status | string | Not null, default: 'pending' |
+| created_at | datetime | Not null |
+| updated_at | datetime | Not null |
+
+**Indexes:**
+- teacher_id
+- due_date
+- priority
+- status
+
+**Valid Priority Values:**
+- low
+- medium
+- high
+
+**Valid Status Values:**
+- pending
+- in_progress
+- completed
+
+---
+
+### Assignment Model
+
+**Location:** `app/models/assignment.rb`
+
+**Associations:**
+- belongs_to :teacher
+- has_many :student_assignments, dependent: :destroy
+- has_many :students, through: :student_assignments
+
+**Validations:**
+- title: presence, max length 200
+- due_date: presence
+- teacher: must exist
+
+**Scopes:**
+- upcoming: `where('due_date > ?', Time.current).order(:due_date)`
+- overdue: `where('due_date < ?', Time.current)`
+- by_subject: `where(subject: subject)`
+- due_between: `where('due_date >= ? AND due_date <= ?', start_date, end_date)`
+
+**Instance Methods:**
+
+`overdue?`
+- Return true if due_date < current time
+
+`students_count`
+- Return count of assigned students
+
+`completed_count`
+- Return count of student_assignments with status 'completed' or 'graded'
+
+`completion_percentage`
+- Return (completed_count / students_count) * 100
+- Return 0 if no students assigned
+
+---
+
+### Student Assignment Model
+
+**Location:** `app/models/student_assignment.rb`
+
+**Associations:**
+- belongs_to :student
+- belongs_to :assignment
+
+**Validations:**
+- student: must exist
+- assignment: must exist
+- status: presence, inclusion in valid values
+- grade: numericality (0-100), optional
+- Unique combination: student_id + assignment_id
+
+**Scopes:**
+- completed: `where(status: ['completed', 'graded'])`
+- graded: `where(status: 'graded')`
+- not_started: `where(status: 'not_started')`
+- for_student: `where(student_id: student_id)`
+
+**Instance Methods:**
+
+`mark_completed!`
+- Set status to 'completed'
+- Set completed_at to current time
+- Save
+
+`mark_graded!(grade, notes: nil)`
+- Set status to 'graded'
+- Set grade
+- Set notes if provided
+- Save
+
+`overdue?`
+- Return true if assignment.due_date < current time and not completed
+
+---
+
+### Task Model
+
+**Location:** `app/models/task.rb`
+
+**Associations:**
+- belongs_to :teacher
+
+**Validations:**
+- title: presence, max length 200
+- priority: presence, inclusion in valid values
+- status: presence, inclusion in valid values
+- teacher: must exist
+
+**Scopes:**
+- incomplete: `where.not(status: 'completed')`
+- high_priority: `where(priority: 'high')`
+- due_today: `where('DATE(due_date) = ?', Date.current)`
+- overdue: `where('due_date < ? AND status != ?', Time.current, 'completed')`
+
+**Instance Methods:**
+
+`mark_completed!`
+- Set status to 'completed'
+- Save
+
+`overdue?`
+- Return true if due_date present and < current time and not completed
+
+---
+
+### Assignments Controller
+
+**Location:** `app/controllers/api/v1/assignments_controller.rb`
+
+**Configuration:**
+- All actions require authentication
+- Verify assignment belongs to current_teacher
+
+**Endpoints:**
+
+`GET /api/v1/assignments`
+- Optional: subject, start_date, end_date
+- Return assignments with completion stats
 - Support pagination
 
-**Get Assignment:**
-- Show assignment details
+`GET /api/v1/assignments/:id`
+- Find assignment by ID
+- Verify belongs to current_teacher
 - Include list of assigned students with status
-- Show completion statistics
+- Include completion statistics
+- Return 404 if not found
+- Return 403 if wrong teacher
 
-**Create Assignment:**
-- Accept assignment details
-- Accept list of student IDs to assign to
-- Create student assignments
-- Return assignment with assignments
+`POST /api/v1/assignments`
+- Accept: title, description, subject, due_date, estimated_time, instructions, student_ids
+- Link to current_teacher
+- Create student_assignments for each student_id
+- Return 201 with assignment
+- Return 422 with validation errors
 
-**Update Assignment:**
-- Update assignment details
-- Handle adding/removing students
-- Don't affect existing completion status
+`PATCH /api/v1/assignments/:id`
+- Accept: title, description, subject, due_date, estimated_time, instructions
+- Find assignment by ID
+- Verify belongs to current_teacher
+- Update fields
+- Return 200 with updated assignment
+- Return 404 if not found
+- Return 403 if wrong teacher
+- Return 422 with validation errors
 
-**Delete Assignment:**
-- Remove assignment
-- Remove all student assignments
-- Handle cascading deletion
+`DELETE /api/v1/assignments/:id`
+- Find assignment by ID
+- Verify belongs to current_teacher
+- Delete assignment (cascades to student_assignments)
+- Return 204
+- Return 404 if not found
+- Return 403 if wrong teacher
 
-**Assign to Students:**
-- Add assignment to specific students
-- Don't duplicate existing assignments
-- Return updated assignment list
+`POST /api/v1/assignments/:id/assign`
+- Accept: student_ids (array)
+- Find assignment by ID
+- Verify belongs to current_teacher
+- Create student_assignments for new students
+- Skip existing assignments
+- Return 200 with updated assignment
+- Return 404 if not found
+- Return 403 if wrong teacher
 
-**Unassign from Students:**
-- Remove assignment from specific students
-- Mark as removed, not deleted (for history)
+`DELETE /api/v1/assignments/:id/unassign`
+- Accept: student_ids (array)
+- Find assignment by ID
+- Verify belongs to current_teacher
+- Delete student_assignments for specified students
+- Return 200 with updated assignment
+- Return 404 if not found
+- Return 403 if wrong teacher
 
 ---
 
-**6. Student Assignments Controller**
+### Student Assignments Controller
 
-Create endpoints:
+**Location:** `app/controllers/api/v1/student_assignments_controller.rb`
 
-**List for Student:**
-- Show all assignments for a student
-- Filter by status
-- Filter by date range
+**Configuration:**
+- All actions require authentication
+
+**Endpoints:**
+
+`GET /api/v1/students/:student_id/assignments`
+- Verify student belongs to current_teacher
+- Optional: status filter
+- Return all assignments for student with status
+- Support pagination
+- Return 403 if wrong teacher
+
+`PATCH /api/v1/student_assignments/:id`
+- Accept: status, grade, notes
+- Find student_assignment by ID
+- Verify both student and assignment belong to current_teacher
+- Update fields
+- If status changed to 'completed', set completed_at
+- Return 200 with updated record
+- Return 404 if not found
+- Return 403 if wrong teacher
+- Return 422 with validation errors
+
+`POST /api/v1/student_assignments/bulk_update`
+- Accept: array of {id, status, grade, notes}
+- Verify all records belong to current_teacher
+- Update each record
+- Return 200 with success count
+- Return 422 with errors for failed updates
+
+---
+
+### Tasks Controller
+
+**Location:** `app/controllers/api/v1/tasks_controller.rb`
+
+**Configuration:**
+- All actions require authentication
+- Verify task belongs to current_teacher
+
+**Endpoints:**
+
+`GET /api/v1/tasks`
+- Optional: status, priority filters
+- Sort by due_date by default
 - Support pagination
 
-**Update Status:**
-- Mark as started, completed, graded
-- Set completion date
-- Add grade
-- Add notes
+`GET /api/v1/tasks/:id`
+- Find task by ID
+- Verify belongs to current_teacher
+- Return 404 if not found
+- Return 403 if wrong teacher
 
-**Bulk Update:**
-- Update multiple student assignments at once
-- Mark multiple as graded with same grade
+`POST /api/v1/tasks`
+- Accept: title, description, due_date, priority, status
+- Link to current_teacher
+- Return 201 with created task
+- Return 422 with validation errors
+
+`PATCH /api/v1/tasks/:id`
+- Accept: title, description, due_date, priority, status
+- Find task by ID
+- Verify belongs to current_teacher
+- Update fields
+- Return 200 with updated task
+- Return 404 if not found
+- Return 403 if wrong teacher
+- Return 422 with validation errors
+
+`DELETE /api/v1/tasks/:id`
+- Find task by ID
+- Verify belongs to current_teacher
+- Delete task
+- Return 204
+- Return 404 if not found
+- Return 403 if wrong teacher
+
+`POST /api/v1/tasks/:id/complete`
+- Find task by ID
+- Verify belongs to current_teacher
+- Mark as completed
+- Return 200 with updated task
+- Return 404 if not found
+- Return 403 if wrong teacher
 
 ---
 
-**7. Tasks Controller**
+### Testing Requirements
 
-Create standard CRUD endpoints:
-
-**List Tasks:**
-- Filter by status
-- Filter by priority
-- Sort by due date
-- Support pagination
-
-**Create/Update/Delete:**
-- Standard operations
-- Validate data
-
-**Mark Complete:**
-- Toggle completion status
-- Set completion timestamp
-
----
-
-### What to Test
-
-**Assignment Model Tests:**
+**Assignment Model:**
 - Cannot create without teacher
-- Cannot create without title or due date
+- Cannot create without title or due_date
 - Can assign to multiple students
-- Calculates completion percentage correctly
+- Completion percentage calculates correctly
 - Identifies overdue assignments
 - Scopes filter correctly
 
-**Student Assignment Model Tests:**
+**Student Assignment Model:**
 - Cannot create duplicate student + assignment
 - Status transitions work correctly
 - Can add grade
 - Can add notes
 - Completion timestamp set automatically
+- Unique constraint enforced
 
-**Task Model Tests:**
+**Task Model:**
 - Cannot create without required fields
 - Priority validation works
 - Status validation works
 - Can mark complete
 - Overdue detection works
 
-**Controllers Tests:**
+**Controllers:**
 - Can create assignments
 - Can assign to students
 - Can update assignment status
 - Can grade assignments
-- Students only see their own assignments
-- Teachers only see their own assignments/tasks
+- Students only see their assignments
+- Teachers only see their assignments/tasks
 - Bulk operations work
 - All require authentication
 
@@ -1829,28 +1702,23 @@ Create standard CRUD endpoints:
 
 ## Phase 5: Report Cards & Progress
 
-### Concepts to Understand
+### Technical Requirements
 
-**How to model academic progress?**
+**Data Model:**
 - Report cards are snapshots in time
-- Each card has multiple subject grades
-- Grades use consistent scale (letter or numeric)
-- Comments provide qualitative feedback
+- Each report card has multiple subject grades
+- Grades use letter (A-F) or numeric (0-100) scale
+- Finalized report cards cannot be edited
 
-**What is a nested resource?**
-- Report cards belong to students
-- Grades belong to report cards
-- API reflects this hierarchy
-- `/students/:id/report_cards/:id`
-
-**How to aggregate data?**
-- Calculate GPA from multiple grades
-- Track progress over time
-- Compare current to previous periods
+**Grading Periods:**
+- Q1, Q2, Q3, Q4 (quarters)
+- S1, S2 (semesters)
+- Year (annual)
+- Custom
 
 ---
 
-### Architecture: Report Cards
+### Architecture
 
 ```
 ┌──────────────┐
@@ -1868,6 +1736,7 @@ Create standard CRUD endpoints:
 │ start_date       │           │
 │ end_date         │           │
 │ overall_comments │           │
+│ finalized_at     │           │
 └──────┬───────────┘           │
        │                       │
        │ has_many              │
@@ -1894,179 +1763,268 @@ Create standard CRUD endpoints:
 
 ---
 
-### What to Build
+### Database Schema
 
-**1. Report Card Model**
+**Report Cards Table:**
 
-Create model for report cards with:
-
-**Data Fields:**
-- Link to student
-- Link to teacher
-- Grading period (Q1, Q2, Semester, Year, etc.)
-- Start and end dates
-- Overall comments
-- Status (draft, finalized)
-
-**Associations:**
-- Belongs to student
-- Belongs to teacher
-- Has many subject grades
-
-**Validations:**
-- Student and teacher required
-- Period required
-- End date after start date
-- No overlapping periods for same student
-
-**Scopes:**
-- Finalized report cards
-- Draft report cards
-- For a specific grading period
-
-**Methods:**
-- Calculate overall GPA
-- Finalize report card (lock it)
-- Check if finalized
-
----
-
-**2. Subject Grade Model**
-
-Create model for individual subject grades:
-
-**Data Fields:**
-- Link to report card
-- Subject name
-- Letter grade
-- Numeric grade (percentage)
-- Comments
-- Teacher notes (private)
-
-**Associations:**
-- Belongs to report card
-
-**Validations:**
-- Report card required
-- Subject name required
-- Grade must be valid (A-F or 0-100)
-- Both letter and numeric grades consistent
-
-**Methods:**
-- Convert between letter and numeric grades
-- Grade point value (for GPA)
-
----
-
-**3. Database Migrations**
-
-Create migrations for:
-
-**Report cards table:**
-- UUID primary key
-- Teacher foreign key
-- Student foreign key
-- Grading period
-- Start and end dates
-- Overall comments
-- Finalized timestamp
-- Timestamps
-
-**Subject grades table:**
-- UUID primary key
-- Report card foreign key
-- Subject name
-- Letter grade
-- Numeric grade
-- Comments
-- Teacher notes
-- Timestamps
+| Column | Type | Constraints |
+|--------|------|-------------|
+| id | uuid | Primary key |
+| teacher_id | uuid | Foreign key, not null |
+| student_id | uuid | Foreign key, not null |
+| grading_period | string | Not null |
+| start_date | date | Not null |
+| end_date | date | Not null |
+| overall_comments | text | Nullable |
+| finalized_at | datetime | Nullable |
+| created_at | datetime | Not null |
+| updated_at | datetime | Not null |
 
 **Indexes:**
-- Teacher and student IDs
-- Grading period
-- Finalized status
+- teacher_id
+- student_id
+- grading_period
+- Composite: student_id + grading_period (unique)
 
-Research:
-- How to prevent overlapping date ranges?
-- How to implement soft locks (finalized status)?
+**Foreign Keys:**
+- teacher_id references teachers(id)
+- student_id references students(id)
+
+**Check Constraints:**
+- end_date must be after start_date
+- No overlapping periods for same student
 
 ---
 
-**4. Report Cards Controller**
+**Subject Grades Table:**
 
-Create endpoints:
+| Column | Type | Constraints |
+|--------|------|-------------|
+| id | uuid | Primary key |
+| report_card_id | uuid | Foreign key, not null |
+| subject_name | string | Not null |
+| letter_grade | string | Nullable |
+| numeric_grade | decimal(5,2) | Nullable |
+| comments | text | Nullable |
+| teacher_notes | text | Nullable |
+| created_at | datetime | Not null |
+| updated_at | datetime | Not null |
 
-**List Report Cards:**
-- For a specific student
-- Filter by grading period
-- Filter by status (draft/finalized)
+**Indexes:**
+- report_card_id
+- Composite: report_card_id + subject_name (unique)
+
+**Foreign Keys:**
+- report_card_id references report_cards(id)
+
+**Valid Letter Grades:**
+- A+, A, A-, B+, B, B-, C+, C, C-, D+, D, D-, F
+
+**Valid Numeric Grades:**
+- 0 to 100
+
+---
+
+### Report Card Model
+
+**Location:** `app/models/report_card.rb`
+
+**Associations:**
+- belongs_to :teacher
+- belongs_to :student
+- has_many :subject_grades, dependent: :destroy
+
+**Validations:**
+- teacher: must exist
+- student: must exist
+- grading_period: presence
+- start_date: presence
+- end_date: presence, must be after start_date
+- No overlapping periods for same student (custom validation)
+
+**Scopes:**
+- finalized: `where.not(finalized_at: nil)`
+- draft: `where(finalized_at: nil)`
+- by_period: `where(grading_period: period)`
+
+**Instance Methods:**
+
+`gpa`
+- Calculate GPA from subject_grades
+- Use 4.0 scale (A=4.0, B=3.0, C=2.0, D=1.0, F=0.0)
+- Return rounded to 2 decimals
+
+`finalize!`
+- Set finalized_at to current time
+- Save
+- Raise error if already finalized
+
+`finalized?`
+- Return true if finalized_at present
+
+---
+
+### Subject Grade Model
+
+**Location:** `app/models/subject_grade.rb`
+
+**Associations:**
+- belongs_to :report_card
+
+**Validations:**
+- report_card: must exist
+- subject_name: presence
+- At least one of letter_grade or numeric_grade must be present
+- letter_grade: inclusion in valid values (if present)
+- numeric_grade: numericality between 0 and 100 (if present)
+- Unique combination: report_card_id + subject_name
+
+**Instance Methods:**
+
+`grade_point`
+- Convert letter_grade to point value for GPA
+- A/A+ = 4.0, A- = 3.7, B+ = 3.3, B = 3.0, B- = 2.7, C+ = 2.3, C = 2.0, C- = 1.7, D+ = 1.3, D = 1.0, D- = 0.7, F = 0.0
+
+`convert_to_letter(numeric)`
+- Convert numeric grade to letter
+- 97-100: A+, 93-96: A, 90-92: A-, 87-89: B+, etc.
+
+`convert_to_numeric(letter)`
+- Convert letter grade to numeric
+- A+ = 98, A = 95, A- = 92, B+ = 88, etc.
+
+---
+
+### Report Cards Controller
+
+**Location:** `app/controllers/api/v1/report_cards_controller.rb`
+
+**Configuration:**
+- All actions require authentication
+- Verify report card belongs to current_teacher
+
+**Endpoints:**
+
+`GET /api/v1/students/:student_id/report_cards`
+- Verify student belongs to current_teacher
+- Optional: grading_period, status (draft/finalized) filters
+- Return all report cards for student
+- Include subject_grades
+- Include GPA calculation
 - Support pagination
+- Return 403 if wrong teacher
 
-**Get Report Card:**
-- Show full details
-- Include all subject grades
+`GET /api/v1/report_cards/:id`
+- Find report card by ID
+- Verify belongs to current_teacher
+- Include all subject_grades
 - Include student info
 - Calculate GPA
+- Return 404 if not found
+- Return 403 if wrong teacher
 
-**Create Report Card:**
-- Create for a student
-- Set grading period and dates
-- Initialize as draft
-- Optionally include initial grades
+`POST /api/v1/students/:student_id/report_cards`
+- Verify student belongs to current_teacher
+- Accept: grading_period, start_date, end_date, overall_comments, subject_grades
+- Create report card (draft status)
+- Create subject_grades if provided
+- Return 201 with created report card
+- Return 422 with validation errors
+- Return 403 if wrong teacher
 
-**Update Report Card:**
-- Update comments
-- Update grades (if not finalized)
-- Cannot update if finalized
+`PATCH /api/v1/report_cards/:id`
+- Find report card by ID
+- Verify belongs to current_teacher
+- Return 422 if finalized
+- Accept: overall_comments, subject_grades
+- Update fields
+- Update or create subject_grades
+- Return 200 with updated report card
+- Return 404 if not found
+- Return 403 if wrong teacher
+- Return 422 if finalized or validation errors
 
-**Finalize Report Card:**
-- Lock the report card
-- Prevent further edits
-- Set finalized timestamp
+`POST /api/v1/report_cards/:id/finalize`
+- Find report card by ID
+- Verify belongs to current_teacher
+- Return 422 if already finalized
+- Set finalized_at
+- Return 200 with finalized report card
+- Return 404 if not found
+- Return 403 if wrong teacher
 
-**Delete Report Card:**
-- Only if draft
-- Remove all subject grades
-- Cannot delete finalized cards
+`DELETE /api/v1/report_cards/:id`
+- Find report card by ID
+- Verify belongs to current_teacher
+- Return 422 if finalized
+- Delete report card (cascades to subject_grades)
+- Return 204
+- Return 404 if not found
+- Return 403 if wrong teacher
 
 ---
 
-**5. Subject Grades Controller**
+### Subject Grades Controller
 
-Create endpoints nested under report cards:
+**Location:** `app/controllers/api/v1/subject_grades_controller.rb`
 
-**Add Grade:**
-- Add subject grade to report card
-- Validate grade values
-- Cannot add to finalized card
+**Configuration:**
+- All actions require authentication
+- Nested under report_cards
 
-**Update Grade:**
-- Update grade or comments
-- Cannot update on finalized card
+**Endpoints:**
 
-**Delete Grade:**
-- Remove subject grade
-- Cannot delete from finalized card
+`POST /api/v1/report_cards/:report_card_id/subject_grades`
+- Find report card by ID
+- Verify belongs to current_teacher
+- Return 422 if report card finalized
+- Accept: subject_name, letter_grade, numeric_grade, comments, teacher_notes
+- Create subject_grade
+- Return 201 with created grade
+- Return 422 with validation errors
+- Return 403 if wrong teacher
+
+`PATCH /api/v1/subject_grades/:id`
+- Find subject_grade by ID
+- Verify report_card belongs to current_teacher
+- Return 422 if report card finalized
+- Accept: letter_grade, numeric_grade, comments, teacher_notes
+- Update fields
+- Return 200 with updated grade
+- Return 404 if not found
+- Return 403 if wrong teacher
+- Return 422 if finalized or validation errors
+
+`DELETE /api/v1/subject_grades/:id`
+- Find subject_grade by ID
+- Verify report_card belongs to current_teacher
+- Return 422 if report card finalized
+- Delete grade
+- Return 204
+- Return 404 if not found
+- Return 403 if wrong teacher
 
 ---
 
-### What to Test
+### Testing Requirements
 
-**Report Card Model Tests:**
-- Cannot create without student and teacher
+**Report Card Model:**
+- Cannot create without teacher and student
 - Cannot overlap grading periods for same student
 - GPA calculates correctly from subject grades
 - Cannot modify finalized report card
 - Status transitions work correctly
+- Validates date range
 
-**Subject Grade Model Tests:**
+**Subject Grade Model:**
 - Cannot create without report card
 - Grade validation works (A-F, 0-100)
 - Letter and numeric grades stay consistent
 - Grade point calculation works
+- Conversion methods work
+- Unique constraint on subject per report card
 
-**Report Cards Controller Tests:**
+**Report Cards Controller:**
 - Can create draft report card
 - Can add subject grades
 - Can finalize report card
@@ -2076,7 +2034,7 @@ Create endpoints nested under report cards:
 - GPA appears in response
 - Requires authentication and authorization
 
-**Subject Grades Controller Tests:**
+**Subject Grades Controller:**
 - Can add grades to draft report card
 - Cannot add grades to finalized report card
 - Can update grades on draft
@@ -2088,40 +2046,36 @@ Create endpoints nested under report cards:
 
 ### Validation Checklist
 
-- [ ] Report card model works
-- [ ] Subject grades model works
+- [ ] Report card model created
+- [ ] Subject grades model created
 - [ ] GPA calculation works
 - [ ] Can create report cards with grades
 - [ ] Can finalize report cards
 - [ ] Finalized cards cannot be edited
 - [ ] Can view report history
+- [ ] Period overlap validation works
 - [ ] All report card tests pass
 
 ---
 
 ## Phase 6: Expense Tracking
 
-### Concepts to Understand
+### Technical Requirements
 
-**Why track homeschool expenses?**
-- Tax deductions (in some jurisdictions)
-- Budget planning
-- Grant/reimbursement documentation
-- Curriculum cost analysis
+**Data Model:**
+- Expenses belong to teachers
+- Categories can be nested (parent-child)
+- Expenses can be linked to specific students
+- Support for recurring expenses
+- Receipt file storage
 
-**How to categorize expenses?**
-- Flexible categories (user-defined)
-- Default categories provided
-- Multiple levels of categorization possible
-
-**What about recurring expenses?**
-- Subscriptions, memberships
-- Different from one-time purchases
-- Need to project future costs
+**Recurring Expenses:**
+- Frequency: monthly, quarterly, annually
+- Used for subscriptions and memberships
 
 ---
 
-### Architecture: Expense Tracking
+### Architecture
 
 ```
 ┌──────────────┐
@@ -2152,204 +2106,285 @@ Create endpoints nested under report cards:
 
 ---
 
-### What to Build
+### Database Schema
 
-**1. Expense Category Model**
+**Expense Categories Table:**
 
-Create model for expense categories:
-
-**Data Fields:**
-- Name
-- Description
-- Color (for UI)
-- Link to teacher
-- Parent category (for sub-categories)
-
-**Associations:**
-- Belongs to teacher
-- Has many expenses
-- Optionally belongs to parent category
-- Has many child categories
-
-**Validations:**
-- Name required and unique per teacher
-- Color must be valid hex code
-
-**Scopes:**
-- Top-level categories (no parent)
-- Active categories
-
-**Methods:**
-- Full category path (Parent > Child)
-- Total expenses in category
-
----
-
-**2. Expense Model**
-
-Create model for expenses:
-
-**Data Fields:**
-- Link to teacher
-- Link to category
-- Optional link to student
-- Amount
-- Date of expense
-- Description
-- Receipt image URL
-- Is recurring flag
-- Recurring frequency (if applicable)
-- Vendor/merchant
-
-**Associations:**
-- Belongs to teacher
-- Belongs to category
-- Optionally belongs to student
-
-**Validations:**
-- Amount required and positive
-- Date required
-- Category required
-- Teacher required
-
-**Scopes:**
-- In date range
-- For a category
-- For a student
-- Recurring expenses
-- One-time expenses
-
-**Methods:**
-- Check if recurring
-- Calculate annual cost (for recurring)
-- Belongs to category path
-
----
-
-**3. Database Migrations**
-
-Create migrations for:
-
-**Expense categories table:**
-- UUID primary key
-- Teacher foreign key
-- Parent category foreign key (self-referential)
-- Name
-- Description
-- Color
-- Timestamps
-
-**Expenses table:**
-- UUID primary key
-- Teacher foreign key
-- Category foreign key
-- Student foreign key (optional)
-- Amount (decimal with precision)
-- Date
-- Description
-- Receipt URL
-- Recurring boolean
-- Recurring frequency
-- Vendor
-- Timestamps
+| Column | Type | Constraints |
+|--------|------|-------------|
+| id | uuid | Primary key |
+| teacher_id | uuid | Foreign key, not null |
+| parent_id | uuid | Foreign key, nullable |
+| name | string | Not null |
+| description | text | Nullable |
+| color | string | Nullable |
+| created_at | datetime | Not null |
+| updated_at | datetime | Not null |
 
 **Indexes:**
-- Teacher IDs
-- Category ID
-- Student ID
-- Date (for range queries)
-- Amount (for sorting)
+- teacher_id
+- parent_id
+- Composite: teacher_id + name (unique)
 
-Research:
-- How to store currency values in database?
-- How to handle self-referential associations?
-- Best decimal precision for money?
+**Foreign Keys:**
+- teacher_id references teachers(id)
+- parent_id references expense_categories(id)
 
 ---
 
-**4. Expense Categories Controller**
+**Expenses Table:**
 
-Create endpoints:
+| Column | Type | Constraints |
+|--------|------|-------------|
+| id | uuid | Primary key |
+| teacher_id | uuid | Foreign key, not null |
+| category_id | uuid | Foreign key, not null |
+| student_id | uuid | Foreign key, nullable |
+| amount | decimal(10,2) | Not null |
+| date | date | Not null |
+| description | text | Nullable |
+| receipt_url | string | Nullable |
+| is_recurring | boolean | Default: false |
+| recurring_frequency | string | Nullable |
+| vendor | string | Nullable |
+| created_at | datetime | Not null |
+| updated_at | datetime | Not null |
 
-**List Categories:**
-- Show all categories for teacher
-- Include hierarchy
-- Include expense totals
+**Indexes:**
+- teacher_id
+- category_id
+- student_id
+- date
+- amount
 
-**Create Category:**
-- Accept category details
-- Optionally set parent category
-- Return created category
+**Foreign Keys:**
+- teacher_id references teachers(id)
+- category_id references expense_categories(id)
+- student_id references students(id)
 
-**Update/Delete:**
-- Standard operations
-- Handle category with expenses (prevent deletion)
+**Valid Recurring Frequencies:**
+- monthly
+- quarterly
+- annually
 
 ---
 
-**5. Expenses Controller**
+### Expense Category Model
 
-Create endpoints:
+**Location:** `app/models/expense_category.rb`
 
-**List Expenses:**
-- Filter by date range
-- Filter by category
-- Filter by student
-- Filter by recurring status
-- Sort by date or amount
+**Associations:**
+- belongs_to :teacher
+- belongs_to :parent, class_name: 'ExpenseCategory', optional: true
+- has_many :children, class_name: 'ExpenseCategory', foreign_key: 'parent_id', dependent: :destroy
+- has_many :expenses, dependent: :restrict_with_error
+
+**Validations:**
+- teacher: must exist
+- name: presence, uniqueness scoped to teacher_id
+- color: format (hex color), optional
+
+**Scopes:**
+- top_level: `where(parent_id: nil)`
+- active: `joins(:expenses).distinct`
+
+**Instance Methods:**
+
+`full_path`
+- Return category path (e.g., "Curriculum > Math")
+- Recursively build from parent
+
+`total_expenses`
+- Sum of all expenses in this category
+- Include expenses from child categories
+
+---
+
+### Expense Model
+
+**Location:** `app/models/expense.rb`
+
+**Associations:**
+- belongs_to :teacher
+- belongs_to :category, class_name: 'ExpenseCategory'
+- belongs_to :student, optional: true
+
+**Validations:**
+- teacher: must exist
+- category: must exist
+- amount: presence, numericality (greater than 0)
+- date: presence
+- recurring_frequency: inclusion in valid values (if is_recurring is true)
+
+**Scopes:**
+- between_dates: `where('date >= ? AND date <= ?', start_date, end_date)`
+- by_category: `where(category_id: category_id)`
+- for_student: `where(student_id: student_id)`
+- recurring: `where(is_recurring: true)`
+- one_time: `where(is_recurring: false)`
+
+**Instance Methods:**
+
+`recurring?`
+- Return is_recurring value
+
+`annual_cost`
+- If not recurring, return amount
+- If monthly, return amount * 12
+- If quarterly, return amount * 4
+- If annually, return amount
+
+`category_path`
+- Return full category path from category.full_path
+
+---
+
+### Expense Categories Controller
+
+**Location:** `app/controllers/api/v1/expense_categories_controller.rb`
+
+**Configuration:**
+- All actions require authentication
+- Verify category belongs to current_teacher
+
+**Endpoints:**
+
+`GET /api/v1/expense_categories`
+- Return all categories for current_teacher
+- Include hierarchy (children nested)
+- Include expense totals per category
+- No pagination (categories typically limited)
+
+`GET /api/v1/expense_categories/:id`
+- Find category by ID
+- Verify belongs to current_teacher
+- Include children
+- Include expense total
+- Return 404 if not found
+- Return 403 if wrong teacher
+
+`POST /api/v1/expense_categories`
+- Accept: name, description, color, parent_id
+- Link to current_teacher
+- Return 201 with created category
+- Return 422 with validation errors
+
+`PATCH /api/v1/expense_categories/:id`
+- Find category by ID
+- Verify belongs to current_teacher
+- Accept: name, description, color, parent_id
+- Update fields
+- Return 200 with updated category
+- Return 404 if not found
+- Return 403 if wrong teacher
+- Return 422 with validation errors
+
+`DELETE /api/v1/expense_categories/:id`
+- Find category by ID
+- Verify belongs to current_teacher
+- Return 422 if category has expenses
+- Delete category
+- Return 204
+- Return 404 if not found
+- Return 403 if wrong teacher
+
+---
+
+### Expenses Controller
+
+**Location:** `app/controllers/api/v1/expenses_controller.rb`
+
+**Configuration:**
+- All actions require authentication
+- Verify expense belongs to current_teacher
+
+**Endpoints:**
+
+`GET /api/v1/expenses`
+- Optional: start_date, end_date, category_id, student_id, recurring filters
+- Sort by date (desc) by default
 - Include pagination
 - Calculate totals
+- Return expenses with category and student info
 
-**Get Expense:**
-- Show details
+**Query Parameters:**
+- start_date: ISO 8601 date
+- end_date: ISO 8601 date
+- category_id: filter by category
+- student_id: filter by student
+- recurring: true/false filter
+- page: page number
+- limit: items per page
+
+`GET /api/v1/expenses/:id`
+- Find expense by ID
+- Verify belongs to current_teacher
 - Include receipt URL
 - Include category and student info
+- Return 404 if not found
+- Return 403 if wrong teacher
 
-**Create Expense:**
-- Accept expense details
-- Upload receipt image
-- Link to category and optionally student
-- Return created expense
+`POST /api/v1/expenses`
+- Accept: category_id, student_id, amount, date, description, is_recurring, recurring_frequency, vendor, receipt (file upload)
+- Link to current_teacher
+- Upload receipt to cloud storage if provided
+- Return 201 with created expense
+- Return 422 with validation errors
 
-**Update Expense:**
-- Update any field
-- Handle receipt upload
+`PATCH /api/v1/expenses/:id`
+- Find expense by ID
+- Verify belongs to current_teacher
+- Accept: category_id, student_id, amount, date, description, is_recurring, recurring_frequency, vendor, receipt (file upload)
+- Update fields
+- Handle receipt upload/replacement
+- Return 200 with updated expense
+- Return 404 if not found
+- Return 403 if wrong teacher
+- Return 422 with validation errors
 
-**Delete Expense:**
-- Remove expense
-- Handle receipt cleanup
+`DELETE /api/v1/expenses/:id`
+- Find expense by ID
+- Verify belongs to current_teacher
+- Delete receipt from cloud storage if exists
+- Delete expense
+- Return 204
+- Return 404 if not found
+- Return 403 if wrong teacher
 
-**Generate Report:**
-- Expenses by category
-- Expenses by month
-- Expenses by student
-- Recurring expense projection
+`GET /api/v1/expenses/reports`
+- Accept: start_date, end_date, group_by (category, month, student)
+- Generate expense report
+- Calculate totals and breakdowns
+- Include recurring expense projections
+- Return aggregated data
 
 ---
 
-### What to Test
+### Testing Requirements
 
-**Expense Category Model Tests:**
+**Expense Category Model:**
 - Cannot create without name
 - Name must be unique per teacher
 - Can nest categories
 - Full path calculation works
 - Total expenses calculation works
+- Cannot delete category with expenses
 
-**Expense Model Tests:**
+**Expense Model:**
 - Cannot create without required fields
 - Amount must be positive
 - Date must be valid
-- Annual cost calculation for recurring expenses
+- Annual cost calculation for recurring expenses works
 - Category path lookup works
 
-**Controllers Tests:**
+**Controllers:**
 - Can create categories
 - Can create expenses
 - Can upload receipts
 - Can filter expenses by multiple criteria
 - Can generate expense reports
 - Totals calculate correctly
+- Recurring expense projection works
 - Requires authentication
 - Teachers only see own data
 
@@ -2365,34 +2400,25 @@ Create endpoints:
 - [ ] Can generate expense reports
 - [ ] Totals calculate correctly
 - [ ] Recurring expense projection works
+- [ ] Category hierarchy works
 - [ ] All expense tests pass
 
 ---
 
 ## Phase 7: Lesson Planning
 
-### Concepts to Understand
+### Technical Requirements
 
-**What is a lesson plan?**
-- Structured outline for teaching a topic
-- Includes objectives, materials, activities, assessment
-- Can be reused and adapted
-- Links to curriculum standards
-
-**How to organize curriculum?**
-- Subjects contain units
-- Units contain lessons
-- Lessons can have resources attached
-- Progress tracked at lesson level
-
-**What about resource management?**
-- Files, links, materials
-- Reusable across lessons
-- Need cloud storage integration
+**Data Model:**
+- Subjects organize lesson plans
+- Lesson plans contain objectives, materials, activities
+- Support for file/link resources
+- Track when lessons are taught
+- Enable lesson duplication for reuse
 
 ---
 
-### Architecture: Lesson Planning
+### Architecture
 
 ```
 ┌──────────────┐
@@ -2420,186 +2446,303 @@ Create endpoints:
 
 ---
 
-### What to Build
+### Database Schema
 
-**1. Subject Model**
+**Subjects Table:**
 
-Create model for subjects:
-
-**Data Fields:**
-- Name
-- Description
-- Color for UI
-- Link to teacher
-- Grade level
-
-**Associations:**
-- Belongs to teacher
-- Has many lesson plans
-
-**Validations:**
-- Name required
-- Color must be valid
-
-**Methods:**
-- Count of lesson plans
-- Count of completed lessons
-
----
-
-**2. Lesson Plan Model**
-
-Create model for lesson plans:
-
-**Data Fields:**
-- Link to teacher
-- Link to subject
-- Title
-- Learning objectives (text/array)
-- Required materials list
-- Activity descriptions
-- Assessment method
-- Resources (files/links)
-- Date taught (when used)
-- Teacher notes
-- Duration estimate
-
-**Associations:**
-- Belongs to teacher
-- Belongs to subject
-
-**Validations:**
-- Title required
-- Subject required
-- Objectives required
-
-**Scopes:**
-- Upcoming lessons
-- Completed lessons
-- For a subject
-
-**Methods:**
-- Mark as taught
-- Check if completed
-- Duplicate lesson (for reuse)
-
----
-
-**3. Database Migrations**
-
-Create migrations for:
-
-**Subjects table:**
-- UUID primary key
-- Teacher foreign key
-- Name
-- Description
-- Color
-- Grade level
-- Timestamps
-
-**Lesson plans table:**
-- UUID primary key
-- Teacher foreign key
-- Subject foreign key
-- Title
-- Objectives (text or JSON)
-- Materials (text or JSON)
-- Activities (text)
-- Assessment (text)
-- Resources (JSON array)
-- Date taught
-- Notes
-- Duration
-- Timestamps
+| Column | Type | Constraints |
+|--------|------|-------------|
+| id | uuid | Primary key |
+| teacher_id | uuid | Foreign key, not null |
+| name | string | Not null |
+| description | text | Nullable |
+| color | string | Nullable |
+| grade_level | string | Nullable |
+| created_at | datetime | Not null |
+| updated_at | datetime | Not null |
 
 **Indexes:**
-- Teacher and subject IDs
-- Date taught
-- Subject + date for sorting
+- teacher_id
+- Composite: teacher_id + name (unique)
 
-Research:
-- How to store arrays/lists in PostgreSQL?
-- JSON vs text for structured data?
-- File upload strategies?
+**Foreign Keys:**
+- teacher_id references teachers(id)
 
 ---
 
-**4. Subjects Controller**
+**Lesson Plans Table:**
 
-Create standard CRUD endpoints:
+| Column | Type | Constraints |
+|--------|------|-------------|
+| id | uuid | Primary key |
+| teacher_id | uuid | Foreign key, not null |
+| subject_id | uuid | Foreign key, not null |
+| title | string | Not null |
+| objectives | text | Not null |
+| materials | text | Nullable |
+| activities | text | Nullable |
+| assessment | text | Nullable |
+| resources | jsonb | Nullable |
+| date_taught | date | Nullable |
+| notes | text | Nullable |
+| duration | integer | Minutes, nullable |
+| created_at | datetime | Not null |
+| updated_at | datetime | Not null |
 
-**List Subjects:**
-- Show all for teacher
+**Indexes:**
+- teacher_id
+- subject_id
+- date_taught
+
+**Foreign Keys:**
+- teacher_id references teachers(id)
+- subject_id references subjects(id)
+
+**Resources JSON Structure:**
+```json
+[
+  {
+    "type": "file",
+    "name": "Worksheet.pdf",
+    "url": "https://..."
+  },
+  {
+    "type": "link",
+    "name": "Educational Video",
+    "url": "https://youtube.com/..."
+  }
+]
+```
+
+---
+
+### Subject Model
+
+**Location:** `app/models/subject.rb`
+
+**Associations:**
+- belongs_to :teacher
+- has_many :lesson_plans, dependent: :restrict_with_error
+
+**Validations:**
+- teacher: must exist
+- name: presence, uniqueness scoped to teacher_id
+- color: format (hex color), optional
+
+**Scopes:**
+- by_grade: `where(grade_level: level)`
+- alphabetical: `order(:name)`
+
+**Instance Methods:**
+
+`lesson_count`
+- Return count of lesson_plans
+
+`completed_lesson_count`
+- Return count of lesson_plans where date_taught is not null
+
+---
+
+### Lesson Plan Model
+
+**Location:** `app/models/lesson_plan.rb`
+
+**Associations:**
+- belongs_to :teacher
+- belongs_to :subject
+
+**Validations:**
+- teacher: must exist
+- subject: must exist
+- title: presence, max length 200
+- objectives: presence
+
+**Scopes:**
+- upcoming: `where(date_taught: nil).order(:created_at)`
+- completed: `where.not(date_taught: nil).order(date_taught: :desc)`
+- by_subject: `where(subject_id: subject_id)`
+- taught_between: `where('date_taught >= ? AND date_taught <= ?', start_date, end_date)`
+
+**Instance Methods:**
+
+`mark_taught!(date = Date.current)`
+- Set date_taught to provided date
+- Save
+
+`completed?`
+- Return true if date_taught present
+
+`duplicate`
+- Create copy of lesson plan
+- Clear date_taught
+- Clear notes
+- Copy all other fields including resources
+- Return new unsaved lesson plan
+
+---
+
+### Subjects Controller
+
+**Location:** `app/controllers/api/v1/subjects_controller.rb`
+
+**Configuration:**
+- All actions require authentication
+- Verify subject belongs to current_teacher
+
+**Endpoints:**
+
+`GET /api/v1/subjects`
+- Return all subjects for current_teacher
+- Include lesson counts
+- Sort alphabetically by default
+- Support pagination
+
+`GET /api/v1/subjects/:id`
+- Find subject by ID
+- Verify belongs to current_teacher
 - Include lesson count
-- Support pagination
+- Return 404 if not found
+- Return 403 if wrong teacher
 
-**Create/Update/Delete:**
-- Standard operations
-- Prevent deletion with lessons
+`POST /api/v1/subjects`
+- Accept: name, description, color, grade_level
+- Link to current_teacher
+- Return 201 with created subject
+- Return 422 with validation errors
+
+`PATCH /api/v1/subjects/:id`
+- Find subject by ID
+- Verify belongs to current_teacher
+- Accept: name, description, color, grade_level
+- Update fields
+- Return 200 with updated subject
+- Return 404 if not found
+- Return 403 if wrong teacher
+- Return 422 with validation errors
+
+`DELETE /api/v1/subjects/:id`
+- Find subject by ID
+- Verify belongs to current_teacher
+- Return 422 if subject has lesson plans
+- Delete subject
+- Return 204
+- Return 404 if not found
+- Return 403 if wrong teacher
 
 ---
 
-**5. Lesson Plans Controller**
+### Lesson Plans Controller
 
-Create endpoints:
+**Location:** `app/controllers/api/v1/lesson_plans_controller.rb`
 
-**List Lesson Plans:**
-- Filter by subject
-- Filter by taught/not taught
-- Filter by date range
-- Sort by date or title
+**Configuration:**
+- All actions require authentication
+- Verify lesson plan belongs to current_teacher
+
+**Endpoints:**
+
+`GET /api/v1/lesson_plans`
+- Optional: subject_id, taught (true/false), start_date, end_date filters
+- Sort by date_taught (desc) then created_at (desc)
+- Include subject info
 - Support pagination
 
-**Get Lesson Plan:**
-- Show full details
+**Query Parameters:**
+- subject_id: filter by subject
+- taught: true/false filter on date_taught
+- start_date: taught after this date
+- end_date: taught before this date
+- page: page number
+- limit: items per page
+
+`GET /api/v1/lesson_plans/:id`
+- Find lesson plan by ID
+- Verify belongs to current_teacher
 - Include resources
 - Include subject info
+- Return 404 if not found
+- Return 403 if wrong teacher
 
-**Create Lesson Plan:**
-- Accept all fields
-- Handle file uploads for resources
-- Return created plan
+`POST /api/v1/lesson_plans`
+- Accept: subject_id, title, objectives, materials, activities, assessment, notes, duration, resources (array), date_taught
+- Link to current_teacher
+- Handle file uploads in resources
+- Return 201 with created lesson plan
+- Return 422 with validation errors
 
-**Update Lesson Plan:**
-- Update any field
+`PATCH /api/v1/lesson_plans/:id`
+- Find lesson plan by ID
+- Verify belongs to current_teacher
+- Accept: subject_id, title, objectives, materials, activities, assessment, notes, duration, resources (array), date_taught
+- Update fields
 - Handle file uploads
-- Mark as taught with date
+- Return 200 with updated lesson plan
+- Return 404 if not found
+- Return 403 if wrong teacher
+- Return 422 with validation errors
 
-**Delete Lesson Plan:**
-- Remove plan
-- Clean up uploaded files
+`DELETE /api/v1/lesson_plans/:id`
+- Find lesson plan by ID
+- Verify belongs to current_teacher
+- Delete uploaded resource files from cloud storage
+- Delete lesson plan
+- Return 204
+- Return 404 if not found
+- Return 403 if wrong teacher
 
-**Duplicate Lesson:**
-- Copy lesson plan
-- Clear taught date
-- Create new copy
+`POST /api/v1/lesson_plans/:id/duplicate`
+- Find lesson plan by ID
+- Verify belongs to current_teacher
+- Create copy without date_taught and notes
+- Copy resources (files remain in storage, reference copied)
+- Return 201 with new lesson plan
+- Return 404 if not found
+- Return 403 if wrong teacher
 
-**Upload Resource:**
-- Add file or link to lesson
-- Return updated resource list
+`POST /api/v1/lesson_plans/:id/mark_taught`
+- Find lesson plan by ID
+- Verify belongs to current_teacher
+- Accept: date (optional, defaults to today)
+- Set date_taught
+- Return 200 with updated lesson plan
+- Return 404 if not found
+- Return 403 if wrong teacher
+
+`POST /api/v1/lesson_plans/:id/resources`
+- Find lesson plan by ID
+- Verify belongs to current_teacher
+- Accept: file upload or link (name, url)
+- Upload file to cloud storage if file
+- Add to resources array
+- Return 200 with updated resources list
+- Return 404 if not found
+- Return 403 if wrong teacher
 
 ---
 
-### What to Test
+### Testing Requirements
 
-**Subject Model Tests:**
+**Subject Model:**
 - Cannot create without name
+- Name must be unique per teacher
 - Can have multiple lesson plans
 - Lesson count accurate
+- Cannot delete subject with lesson plans
 
-**Lesson Plan Model Tests:**
+**Lesson Plan Model:**
 - Cannot create without required fields
 - Can mark as taught
 - Duplication creates independent copy
-- Resources stored correctly
+- Resources stored correctly in JSON
+- Completed status works
 
-**Controllers Tests:**
+**Controllers:**
 - Can create subjects and lessons
-- Can upload resources
-- Can filter lessons
+- Can upload resource files
+- Can filter lessons by multiple criteria
 - Can duplicate lessons
 - Taught date updates correctly
+- Resource management works
 - Requires authentication
 - Teachers only see own data
 
@@ -2607,289 +2750,408 @@ Create endpoints:
 
 ### Validation Checklist
 
+- [ ] Subject model created
+- [ ] Lesson plan model created
 - [ ] Can create subjects
 - [ ] Can create lesson plans
-- [ ] Can upload resources
+- [ ] Can upload resource files
 - [ ] Can mark lessons as taught
 - [ ] Can duplicate lessons
 - [ ] Can filter and search lessons
 - [ ] File uploads work
+- [ ] Resources JSON structure correct
 - [ ] All lesson planning tests pass
 
 ---
 
 ## Phase 8: Production Preparation
 
-### Concepts to Understand
+### Technical Requirements
 
-**What makes an API production-ready?**
-- Error handling and logging
-- Rate limiting
-- Monitoring and alerts
-- Automated backups
-- Security hardening
-- Performance optimization
-
-**What is a health check endpoint?**
-- Simple endpoint to verify service is running
-- Used by load balancers and monitoring
-- Checks database connectivity
-- Returns service status
-
-**How to handle errors gracefully?**
-- Never expose stack traces to users
-- Log errors for debugging
-- Return consistent error format
-- Alert on critical errors
-
----
-
-### What to Build
-
-**1. Error Handling**
-
-Implement global error handling:
-
-**Application-level error handling:**
-- Catch all unhandled exceptions
-- Log with context (user, request, timestamp)
-- Return generic error to user
-- Alert on 500 errors
-
-**Custom error classes:**
-- Authentication errors
-- Authorization errors
-- Validation errors
-- Not found errors
-- Rate limit errors
-
-**Error logging:**
-- Structured logs
+**Error Handling:**
+- Global exception handling
+- Structured logging
 - Error tracking service integration
 - Request ID tracking
 
-Research:
-- How to implement global exception handling in Rails?
-- What error tracking services are available?
-- How to generate request IDs?
+**Rate Limiting:**
+- Per-IP rate limiting
+- Per-user rate limiting
+- Configurable limits
+- Rate limit headers in responses
 
----
+**Performance:**
+- Database query optimization
+- Caching strategy
+- Background job processing
+- Connection pooling
 
-**2. Rate Limiting**
-
-Implement request rate limiting:
-
-**Per-IP rate limiting:**
-- Limit requests per hour/day
-- Return 429 status when exceeded
-- Provide headers showing limit/remaining
-
-**Per-user rate limiting:**
-- Different limits for authenticated users
-- Track by user ID
-
-Research:
-- What rate limiting strategies exist?
-- How to implement in Rails?
-- What's a reasonable limit?
-
----
-
-**3. Health Checks**
-
-Create health check endpoints:
-
-**Basic health check:**
-- Returns 200 if service is up
-- No authentication required
-
-**Detailed health check:**
-- Check database connection
-- Check Redis connection
-- Check external service dependencies
-- Return status of each
-
-Research:
-- Standard health check endpoint patterns?
-- What should be included?
-
----
-
-**4. Performance Optimization**
-
-Optimize API performance:
-
-**Database optimization:**
-- Add missing indexes
-- Optimize slow queries
-- Use eager loading to avoid N+1 queries
-- Add database connection pooling
-
-**Caching:**
-- Cache expensive queries
-- Cache authentication lookups
-- Set appropriate cache TTLs
-
-**Background jobs:**
-- Move slow operations to background
-- Email sending
-- File processing
-- Report generation
-
-Research:
-- How to identify slow queries?
-- What should be cached?
-- How to implement background jobs?
-
----
-
-**5. Security Hardening**
-
-Implement security best practices:
-
-**Headers:**
-- Set security headers (HSTS, X-Frame-Options, etc.)
-- Content Security Policy
-- CORS properly configured
-
-**Input validation:**
-- Strong parameter filtering
+**Security:**
+- Security headers
+- Input validation
+- HTTPS enforcement
 - SQL injection prevention
 - XSS prevention
 
-**Authentication:**
-- Enforce HTTPS only
-- Short access token expiry
-- Refresh token rotation
-
-**Authorization:**
-- Check ownership on all operations
-- Prevent enumeration attacks
-- Rate limit authentication attempts
-
-Research:
-- Rails security best practices
-- OWASP top 10
-- Security headers
+**Monitoring:**
+- Application metrics
+- Business metrics
+- Health checks
+- Alerting
 
 ---
 
-**6. Monitoring and Alerts**
+### Error Handling Implementation
 
-Set up monitoring:
+**Global Exception Handler:**
 
-**Application metrics:**
-- Request rate
-- Response time
-- Error rate
+**Location:** `app/controllers/concerns/exception_handler.rb`
+
+**Functionality:**
+- Rescue from all StandardError
+- Log error with context (user, request, timestamp)
+- Generate request ID for tracking
+- Return generic error to user (never expose stack trace)
+- Integrate with error tracking service
+- Alert on 500 errors
+
+**Custom Error Classes:**
+- Create in `app/errors/`
+- AuthenticationError
+- AuthorizationError
+- ValidationError
+- NotFoundError
+- RateLimitError
+
+**Error Logging:**
+- Use Rails logger
+- Include request ID
+- Include user ID
+- Include timestamp
+- Include error class and message
+- Include backtrace (in logs only, never to user)
+
+---
+
+### Rate Limiting Implementation
+
+**Strategy:**
+- Use middleware (Rack::Attack or similar)
+- Track by IP address
+- Track by user ID (if authenticated)
+- Different limits for different endpoints
+
+**Default Limits:**
+- Unauthenticated: 60 requests per hour per IP
+- Authenticated: 1000 requests per hour per user
+- Login endpoint: 5 requests per 15 minutes per IP
+- Signup endpoint: 3 requests per hour per IP
+
+**Response Headers:**
+- X-RateLimit-Limit: Total allowed
+- X-RateLimit-Remaining: Remaining in window
+- X-RateLimit-Reset: When limit resets (Unix timestamp)
+
+**Response on Limit Exceeded:**
+- Status: 429 Too Many Requests
+- Body: JSON with error message and retry_after
+
+---
+
+### Health Check Implementation
+
+**Endpoints:**
+
+`GET /health`
+- No authentication required
+- Check Rails is responding
+- Return 200 with { status: "ok" }
+
+`GET /health/detailed`
+- Authentication required (or internal only)
+- Check database connection
+- Check Redis connection
+- Check external service dependencies
+- Return status of each component
+- Return 200 if all healthy
+- Return 503 if any component unhealthy
+
+**Response Format:**
+```json
+{
+  "status": "ok",
+  "timestamp": "2024-01-20T12:00:00Z",
+  "components": {
+    "database": "ok",
+    "redis": "ok",
+    "storage": "ok"
+  }
+}
+```
+
+---
+
+### Performance Optimization
+
+**Database Optimization:**
+
+**Missing Indexes:**
+- Run query analysis
+- Add indexes where needed
+- Focus on foreign keys and frequently queried columns
+
+**N+1 Query Prevention:**
+- Use includes/joins in controllers
+- Eager load associations
+- Example: `Assignment.includes(:students).where(teacher_id: teacher.id)`
+
+**Query Optimization:**
+- Use select to limit columns
+- Use pluck for single column
+- Add database views for complex queries
+- Use counter caches where appropriate
+
+**Connection Pooling:**
+- Configure pool size in database.yml
+- Recommended: 5-10 connections per process
+- Monitor connection usage
+
+---
+
+**Caching Strategy:**
+
+**What to Cache:**
+- Authentication lookups (teacher by ID)
+- Expensive calculations (GPA, statistics)
+- Frequently accessed data (categories, subjects)
+
+**Cache Keys:**
+- Include record ID and updated_at
+- Example: `teacher-#{id}-#{updated_at.to_i}`
+- Invalidate on update
+
+**TTL Settings:**
+- Authentication: 5 minutes
+- Calculations: 1 hour
+- Reference data: 24 hours
+
+**Implementation:**
+- Use Rails.cache
+- Redis as cache store
+- Fragment caching for complex responses
+
+---
+
+**Background Jobs:**
+
+**Move to Background:**
+- Email sending
+- File processing
+- Report generation
+- Data exports
+
+**Job Processing:**
+- Use Sidekiq or similar
+- Configure queues by priority
+- Set retry logic
+- Monitor job queue
+
+---
+
+### Security Hardening
+
+**Security Headers:**
+
+Configure in `config/application.rb`:
+- X-Frame-Options: DENY
+- X-Content-Type-Options: nosniff
+- X-XSS-Protection: 1; mode=block
+- Strict-Transport-Security: max-age=31536000
+- Content-Security-Policy: default-src 'self'
+
+**HTTPS Enforcement:**
+- Force SSL in production
+- Redirect HTTP to HTTPS
+- Configure in Rails: `config.force_ssl = true`
+
+**Input Validation:**
+- Strong parameters in all controllers
+- Validate all user input
+- Sanitize text fields
+- Prevent mass assignment
+
+**SQL Injection Prevention:**
+- Use parameterized queries (ActiveRecord does this)
+- Never interpolate user input into SQL
+- Use where with hash or array syntax
+
+**XSS Prevention:**
+- Rails escapes output by default
+- Don't use html_safe on user input
+- Sanitize rich text if needed
+
+**Rate Limiting:**
+- Implement as described above
+- Protect authentication endpoints especially
+- Monitor for brute force attempts
+
+**Token Security:**
+- Short access token expiry (1 hour)
+- Refresh token rotation (optional)
+- Revoke refresh tokens on logout
+- Store tokens securely (httpOnly cookies for web)
+
+---
+
+### Monitoring Implementation
+
+**Application Metrics:**
+
+Track:
+- Request rate (requests per second)
+- Response time (p50, p95, p99)
+- Error rate (errors per second, percentage)
 - Database query time
+- Cache hit rate
 
-**Business metrics:**
-- User registrations
-- Active users
-- API usage
+**Business Metrics:**
 
-**Alerts:**
-- Error rate spike
-- Slow response time
-- Database connection issues
-- Service downtime
+Track:
+- User registrations per day
+- Active users (DAU, WAU, MAU)
+- API calls per user
+- Most used endpoints
+- Average session duration
 
-Research:
-- What monitoring tools are available?
-- What metrics matter most?
-- How to set alert thresholds?
+**Health Monitoring:**
+
+Monitor:
+- CPU usage
+- Memory usage
+- Disk space
+- Database connections
+- Background job queue size
+
+**Alerting:**
+
+Alert on:
+- Error rate spike (> 5% of requests)
+- Response time spike (p95 > 2 seconds)
+- Database connection pool exhausted
+- Background job queue growing
+- Service unavailable (500 errors)
+- High CPU/memory usage
+
+**Tools:**
+- APM: New Relic, DataDog, or similar
+- Error tracking: Sentry, Bugsnag, or similar
+- Logging: LogDNA, Papertrail, or similar
 
 ---
 
-**7. Documentation**
+### Documentation
 
-Create API documentation:
+**API Documentation:**
 
-**Endpoint documentation:**
-- All endpoints listed
-- Request/response examples
+Create documentation including:
+- All endpoints with HTTP methods
+- Request parameters and body schemas
+- Response schemas and examples
 - Authentication requirements
-- Error codes
+- Error codes and messages
+- Rate limiting information
 
-**Getting started guide:**
-- How to authenticate
-- Example API calls
-- Common workflows
-
-**Deployment guide:**
-- Environment setup
-- Database migrations
-- Environment variables
-- SSL certificate setup
-
-Research:
-- API documentation tools
-- Documentation best practices
+**Format:**
+- OpenAPI/Swagger specification
+- Interactive documentation (Swagger UI)
+- Code examples in multiple languages
 
 ---
 
-**8. Deployment Setup**
+**Deployment Documentation:**
 
-Prepare for deployment:
+Document:
+- Environment setup
+- Required environment variables
+- Database setup and migrations
+- SSL certificate setup
+- Deployment process
+- Rollback procedure
+- Monitoring setup
+- Backup and restore procedures
+
+---
+
+### Deployment Preparation
 
 **Database:**
-- Production database created
-- Backups configured
-- Connection pooling set up
+- Production database provisioned
+- Automated backups configured (daily at minimum)
+- Backup restoration tested
+- Connection pooling configured
+- Read replicas (if needed for scale)
 
 **Environment:**
-- All environment variables set
-- Secrets properly managed
-- SSL certificates configured
+- All environment variables documented
+- Secrets stored securely (not in code)
+- SSL certificates obtained and configured
+- DNS configured
 
 **Hosting:**
 - Application server configured
-- Database server configured
-- Redis server configured
-- File storage configured
+- Database server configured (or managed service)
+- Redis server configured (or managed service)
+- Cloud storage configured (S3 or equivalent)
+- CDN configured (if needed)
 
 **CI/CD:**
 - Automated testing on push
-- Automated deployment on merge
-- Rollback strategy
+- Automated deployment on merge to main
+- Rollback mechanism
+- Deployment notifications
 
-Research:
-- Hosting options for Rails APIs
-- CI/CD tools
-- Database hosting
-- File storage options
+**Monitoring:**
+- APM configured
+- Error tracking configured
+- Logging configured
+- Alerts configured
+- Dashboards created
 
 ---
 
-### What to Test
+### Testing Requirements
 
 **Error Handling:**
 - Unhandled exceptions return 500
 - Error logs contain needed context
 - No sensitive data in error responses
+- Request IDs tracked correctly
 
 **Rate Limiting:**
-- Requests are limited correctly
+- Requests limited correctly
 - Headers show remaining requests
 - 429 returned when exceeded
+- Different limits for different endpoints
 
 **Health Checks:**
 - Returns 200 when healthy
 - Returns error when database unavailable
-- No authentication required
+- No authentication required for basic health
+- Detailed health requires authentication
 
 **Performance:**
-- No N+1 queries
+- No N+1 queries in controllers
 - Indexes improve query speed
-- Caching works correctly
+- Caching reduces database load
+- Background jobs process correctly
 
 **Security:**
 - Security headers present
-- HTTPS enforced
+- HTTPS enforced in production
 - SQL injection prevented
 - XSS prevented
-- Authorization checks work
+- Authorization checks on all protected endpoints
+- Rate limiting protects against brute force
 
 ---
 
@@ -2897,62 +3159,60 @@ Research:
 
 - [ ] Global error handling implemented
 - [ ] Errors logged with context
-- [ ] Rate limiting works
-- [ ] Health check endpoints exist
+- [ ] Error tracking service integrated
+- [ ] Rate limiting implemented
+- [ ] Rate limit headers returned
+- [ ] Health check endpoints created
 - [ ] Database indexes optimized
 - [ ] N+1 queries eliminated
 - [ ] Caching implemented
-- [ ] Background jobs set up
+- [ ] Background jobs configured
 - [ ] Security headers configured
 - [ ] HTTPS enforced
+- [ ] Input validation thorough
+- [ ] SQL injection prevented
+- [ ] XSS prevented
 - [ ] Monitoring configured
+- [ ] Alerts configured
 - [ ] API documentation complete
-- [ ] Deployment guide written
-- [ ] Production environment ready
-- [ ] Backups configured
+- [ ] Deployment documentation complete
+- [ ] Production environment configured
+- [ ] Backups configured and tested
+- [ ] CI/CD pipeline configured
 - [ ] All production tests pass
 
 ---
 
 ## Conclusion
 
-You've now learned the concepts and architecture behind building a complete Rails API. The key to mastery is:
+This guide provides the technical specifications for building the Homeschool Master Rails API. Each phase builds upon the previous, creating a complete backend system ready for production deployment.
 
-1. **Understand why** before building
-2. **Research solutions** rather than copying
-3. **Test thoroughly** at each step
-4. **Validate understanding** through working code
+**Implementation order is important** - complete phases sequentially as later phases depend on earlier infrastructure.
 
-Good luck building your Homeschool Master API!
+**Testing at each phase** ensures quality and prevents regressions as features are added.
+
+**Production preparation** is critical for a reliable, secure, and performant API.
 
 ---
 
-## Appendix: Learning Resources
+## Appendix: Technical Reference
 
 **Rails Documentation:**
-- Rails Guides: https://guides.rubyonrails.org
-- Rails API Documentation: https://api.rubyonrails.org
+- https://guides.rubyonrails.org
+- https://api.rubyonrails.org
 
 **Ruby Documentation:**
-- Ruby Documentation: https://ruby-doc.org
-- Ruby Style Guide: https://rubystyle.guide
+- https://ruby-doc.org
+- https://rubystyle.guide
 
 **PostgreSQL:**
-- PostgreSQL Documentation: https://www.postgresql.org/docs
+- https://www.postgresql.org/docs
 
 **Testing:**
-- RSpec Documentation: https://rspec.info
-- Testing best practices
+- https://rspec.info
 
 **Security:**
-- OWASP Top 10: https://owasp.org
-- Rails Security Guide
+- https://owasp.org
 
 **Deployment:**
-- 12 Factor App: https://12factor.net
-- Various hosting platform documentation
-
-**General:**
-- Stack Overflow for specific questions
-- GitHub for example code
-- Dev.to and Medium for tutorials
+- https://12factor.net
