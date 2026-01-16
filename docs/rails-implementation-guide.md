@@ -2,8 +2,7 @@
 
 Technical implementation specification for the Homeschool Master Rails API backend.
 
-**Philosophy:** Each phase is self-contained. At the end of every phase, the application compiles, all tests pass, and no code references things that don't exist yet.
-
+**Philosophy:** Each phase is self-contained. At the end of every phase, the application compiles, all tests pass.
 ---
 
 ## Table of Contents
