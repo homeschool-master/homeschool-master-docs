@@ -2,6 +2,8 @@
 
 Technical implementation specification for the Homeschool Master Rails API backend.
 
+**Philosophy:** Each phase is self-contained. At the end of every phase, the application compiles, all tests pass, and no code references things that don't exist yet.
+
 ---
 
 ## Table of Contents
@@ -26,188 +28,48 @@ Set up a working Rails API with PostgreSQL, UUID primary keys, CORS, linting, an
 
 ---
 
-### Gemfile
+### Dependencies
 
-```ruby
-source "https://rubygems.org"
-
-ruby "3.2.2"
-
-# Core
-gem "rails", "~> 7.1.0"
-gem "pg", "~> 1.5"
-gem "puma", ">= 5.0"
-
-# API
-gem "rack-cors", "~> 2.0"
-
-# Environment Variables
-gem "dotenv-rails", groups: [:development, :test]
-
-# Timezone data for Windows
-gem "tzinfo-data", platforms: %i[windows jruby]
-
-# Performance
-gem "bootsnap", require: false
-
-group :development, :test do
-  gem "debug", platforms: %i[mri windows]
-  gem "rspec-rails", "~> 6.0"
-  gem "factory_bot_rails", "~> 6.2"
-  gem "faker", "~> 3.2"
-  gem "pry-rails"
-end
-
-group :development do
-  gem "rubocop-rails", require: false
-end
-
-group :test do
-  gem "shoulda-matchers", "~> 5.3"
-  gem "database_cleaner-active_record", "~> 2.1"
-end
-```
+| Gem | Purpose | Why This Phase | Why This Gem |
+|-----|---------|----------------|--------------|
+| rails | Web framework | Foundation of the entire API. | Only choice for a Rails API. |
+| pg | PostgreSQL adapter | Need to connect to PostgreSQL database. | Only maintained PostgreSQL adapter for Rails. |
+| puma | Web server | Need to serve HTTP requests. | Rails default, handles concurrent requests well. Falcon is faster but less battle-tested. |
+| rack-cors | CORS middleware | Mobile app runs on different origin than API—browsers block cross-origin requests without CORS headers. | Standard choice, simple configuration. |
+| dotenv-rails | Environment variable loading | Need to keep secrets out of code, load from .env files in development. | Simple and widely used. Alternatives like figaro work but dotenv is more common. |
+| rspec-rails | Testing framework | Need to write tests from day one. | More expressive than Minitest, better community resources. Minitest is lighter but less flexible. |
+| factory_bot_rails | Test data factories | Need to create test records without fixtures. | Industry standard for Rails. Fabrication is similar but less popular. |
+| faker | Fake data generation | Need realistic test data (names, emails, etc.). | Most comprehensive fake data library. |
+| rubocop-rails | Code linting | Enforce consistent code style from the start. | Standard Ruby linter with Rails-specific rules. |
+| shoulda-matchers | Model test helpers | Simplifies testing validations and associations. | Makes model specs much cleaner. No real alternative. |
+| database_cleaner-active_record | Test database cleanup | Need clean database state between tests. | Standard choice. Rails transactional tests work but can have edge cases. |
 
 ---
 
 ### PostgreSQL Setup
 
-Enable UUID extension via migration:
-
-```ruby
-class EnableUuid < ActiveRecord::Migration[7.1]
-  def change
-    enable_extension 'pgcrypto'
-  end
-end
-```
-
-Configure generators for UUID primary keys in `config/application.rb`:
-
-```ruby
-config.generators do |g|
-  g.orm :active_record, primary_key_type: :uuid
-end
-```
+- Enable UUID extension (pgcrypto) via migration
+- Configure generators to use UUID primary keys by default
+- Create development and test databases
 
 ---
 
 ### CORS Configuration
 
-Create `config/initializers/cors.rb`:
-
-```ruby
-Rails.application.config.middleware.insert_before 0, Rack::Cors do
-  allow do
-    origins 'localhost:8081', '127.0.0.1:8081'
-    
-    resource '*',
-      headers: :any,
-      methods: [:get, :post, :put, :patch, :delete, :options, :head],
-      expose: ['Authorization']
-  end
-end
-```
+- Allow origins: localhost:8081, 127.0.0.1:8081
+- Allow methods: GET, POST, PUT, PATCH, DELETE, OPTIONS, HEAD
+- Allow headers: any
+- Expose headers: Authorization
 
 ---
 
 ### Environment Variables
 
-Create `.env`:
-
-```bash
-# Database
-DATABASE_URL=postgres://localhost/homeschool_api_development
-
-# App
-APP_HOST=http://localhost:3000
-FRONTEND_URL=http://localhost:8081
-```
-
----
-
-### Base Controller
-
-**Location:** `app/controllers/api/v1/base_controller.rb`
-
-Phase 0 version has response helpers only. Authentication is added in Phase 1.
-
-```ruby
-module Api
-  module V1
-    class BaseController < ApplicationController
-      private
-
-      def render_success(data, status: :ok, meta: nil)
-        response = { success: true, data: data }
-        response[:meta] = meta if meta.present?
-        render json: response, status: status
-      end
-
-      def render_created(data)
-        render_success(data, status: :created)
-      end
-
-      def render_no_content
-        head :no_content
-      end
-
-      def render_error(message, code: 'ERROR', status: :bad_request, details: nil)
-        response = {
-          success: false,
-          error: {
-            code: code,
-            message: message
-          }
-        }
-        response[:error][:details] = details if details.present?
-        render json: response, status: status
-      end
-
-      def render_unauthorized(message = 'Unauthorized')
-        render_error(message, code: 'UNAUTHORIZED', status: :unauthorized)
-      end
-
-      def render_forbidden(message = 'Forbidden')
-        render_error(message, code: 'FORBIDDEN', status: :forbidden)
-      end
-
-      def render_not_found(resource = 'Resource')
-        render_error("#{resource} not found", code: 'NOT_FOUND', status: :not_found)
-      end
-
-      def render_validation_errors(model)
-        render_error(
-          'Validation failed',
-          code: 'VALIDATION_ERROR',
-          status: :unprocessable_entity,
-          details: model.errors.messages
-        )
-      end
-    end
-  end
-end
-```
-
----
-
-### Routes
-
-**Location:** `config/routes.rb`
-
-Phase 0 only defines the health check:
-
-```ruby
-Rails.application.routes.draw do
-  namespace :api do
-    namespace :v1 do
-      # Routes added in subsequent phases
-    end
-  end
-
-  get '/health', to: proc { [200, {}, ['OK']] }
-end
-```
+| Variable | Description |
+|----------|-------------|
+| DATABASE_URL | PostgreSQL connection string |
+| APP_HOST | API host URL (http://localhost:3000) |
+| FRONTEND_URL | Mobile app URL (http://localhost:8081) |
 
 ---
 
@@ -222,6 +84,35 @@ app/
   models/
   services/
 ```
+
+---
+
+### Base Controller
+
+**Location:** `app/controllers/api/v1/base_controller.rb`
+
+Phase 0 version has response helpers only. No authentication (added in Phase 1).
+
+**Required Capabilities:**
+
+| Response Type | Status | Structure |
+|---------------|--------|-----------|
+| Success | 200 | `{ success: true, data: ..., meta?: ... }` |
+| Created | 201 | `{ success: true, data: ... }` |
+| No Content | 204 | Empty |
+| Error | varies | `{ success: false, error: { code: ..., message: ..., details?: ... } }` |
+| Unauthorized | 401 | Error with code 'UNAUTHORIZED' |
+| Forbidden | 403 | Error with code 'FORBIDDEN' |
+| Not Found | 404 | Error with code 'NOT_FOUND' |
+| Validation Error | 422 | Error with code 'VALIDATION_ERROR', details from model errors |
+
+---
+
+### Routes
+
+Phase 0 only defines:
+- Health check: GET /health → returns 200 OK
+- Empty api/v1 namespace (placeholder for future routes)
 
 ---
 
@@ -241,13 +132,13 @@ app/
 - GET /health returns 200 OK
 
 **Base Controller Response Helpers:**
-- `render_success` returns `{ success: true, data: ... }` with 200
-- `render_created` returns 201 status
-- `render_error` returns `{ success: false, error: { code: ..., message: ... } }`
-- `render_unauthorized` returns 401
-- `render_forbidden` returns 403
-- `render_not_found` returns 404
-- `render_validation_errors` returns 422 with error details
+- Success responses return correct structure with 200
+- Created responses return 201 status
+- Error responses return correct error structure
+- Unauthorized returns 401
+- Forbidden returns 403
+- Not found returns 404
+- Validation errors return 422 with error details
 
 ---
 
@@ -276,30 +167,22 @@ Implement complete authentication with JWT tokens, teacher registration, login, 
 
 ---
 
-### New Dependencies
+### Dependencies
 
-Add to Gemfile:
-
-```ruby
-# Authentication
-gem "bcrypt", "~> 3.1.7"
-gem "jwt", "~> 2.7"
-```
-
-Run `bundle install`.
+| Gem | Purpose | Why This Phase | Why This Gem |
+|-----|---------|----------------|--------------|
+| bcrypt | Password hashing for has_secure_password | Teacher model needs secure password storage for registration and login. | Rails' built-in has_secure_password expects bcrypt. It's the standard—no real alternatives here. |
+| jwt | Encode/decode JSON Web Tokens | Authentication requires issuing access tokens and refresh tokens to clients. | The most popular Ruby JWT library. jose is an alternative but more complex and overkill for simple token auth. |
 
 ---
 
 ### Environment Variables
 
-Add to `.env`:
-
-```bash
-# JWT
-JWT_SECRET_KEY=your-super-secret-key-change-in-production
-JWT_ACCESS_TOKEN_EXPIRY=3600
-JWT_REFRESH_TOKEN_EXPIRY=2592000
-```
+| Variable | Description | Default |
+|----------|-------------|---------|
+| JWT_SECRET_KEY | Secret for signing tokens | (required) |
+| JWT_ACCESS_TOKEN_EXPIRY | Access token lifetime in seconds | 3600 |
+| JWT_REFRESH_TOKEN_EXPIRY | Refresh token lifetime in seconds | 2592000 |
 
 ---
 
@@ -361,162 +244,108 @@ JWT_REFRESH_TOKEN_EXPIRY=2592000
 
 **Location:** `app/services/jwt_service.rb`
 
-**Methods:**
+**Required Capabilities:**
+- Encode a payload into a signed JWT with expiration (default from ENV)
+- Encode a refresh token with teacher_id, type identifier, and unique jti
+- Decode and verify a token, returning the payload or nil on any error
+- Decode a refresh token and verify it's the correct type
 
-`encode(payload, exp: nil)`
-- Add expiration to payload (default: ENV['JWT_ACCESS_TOKEN_EXPIRY'] or 3600 seconds)
-- Add issued-at timestamp
-- Sign with HS256 using secret key
-- Return JWT string
-
-`encode_refresh_token(teacher_id)`
-- Create payload with teacher_id, type: 'refresh', unique jti (SecureRandom.uuid)
-- Set expiration (ENV['JWT_REFRESH_TOKEN_EXPIRY'] or 2592000 seconds)
-- Sign with HS256
-- Return JWT string
-
-`decode(token)`
-- Verify signature and expiration
-- Return payload hash with symbolized keys
-- Return nil on any JWT error
-
-`decode_refresh_token(token)`
-- Decode token
-- Verify type is 'refresh'
-- Return payload or nil
+**Configuration:**
+- Algorithm: HS256
+- Claims: exp (expiration), iat (issued at)
+- Refresh tokens also include: jti (unique identifier), type identifier
 
 ---
 
 ### Teacher Model
 
-**Location:** `app/models/teacher.rb`
-
-**Includes:**
-- has_secure_password
-
-**Callbacks:**
-- before_save: downcase email
-- before_create: generate email verification token
+**Behaviors:**
+- Secure password storage (Rails built-in)
+- Email always stored lowercase
+- Email verification token generated automatically on creation
+- Has many refresh tokens (destroyed when teacher deleted)
 
 **Validations:**
-- first_name: presence, max length 100
-- last_name: presence, max length 100
-- nickname: max length 100 (optional)
-- email: presence, uniqueness (case insensitive), valid format
-- password: minimum 8 characters (on create or when present)
-- phone: max length 20 (optional)
 
-**Associations:**
-- has_many :refresh_tokens, dependent: :destroy
+| Field | Rules |
+|-------|-------|
+| first_name | presence, max length 100 |
+| last_name | presence, max length 100 |
+| nickname | max length 100 (optional) |
+| email | presence, uniqueness (case insensitive), valid format |
+| password | minimum 8 characters (on create or when present) |
+| phone | max length 20 (optional) |
 
-**Scopes:**
-- active: `where(is_active: true)`
-- verified: `where.not(email_verified_at: nil)`
-
-**Instance Methods:**
-- `full_name` - "first_name last_name"
-- `display_name` - nickname or full_name
-- `email_verified?` - email_verified_at present?
-- `verify_email!` - set email_verified_at, clear token
-- `generate_password_reset_token!` - generate token, set timestamp
-- `password_reset_token_valid?` - token present and less than 2 hours old
-- `clear_password_reset_token!` - clear token and timestamp
-
-**Class Methods:**
-- `find_by_email(email)` - case-insensitive lookup
+**Required Capabilities:**
+- Query active teachers only
+- Query verified teachers only
+- Look up teacher by email (case insensitive)
+- Get teacher's full name and display name (nickname if set)
+- Verify a teacher's email (sets timestamp, clears token)
+- Generate password reset token (valid for 2 hours)
+- Check if reset token is still valid
+- Clear password reset token after use
 
 ---
 
 ### Refresh Token Model
 
-**Location:** `app/models/refresh_token.rb`
-
-**Associations:**
-- belongs_to :teacher
+**Behaviors:**
+- Belongs to a teacher
+- Destroyed when teacher deleted (via foreign key cascade)
 
 **Validations:**
-- token: presence, uniqueness
-- jti: presence, uniqueness
-- expires_at: presence
 
-**Scopes:**
-- active: not revoked and not expired
+| Field | Rules |
+|-------|-------|
+| token | presence, uniqueness |
+| jti | presence, uniqueness |
+| expires_at | presence |
 
-**Instance Methods:**
-- `expired?` - expires_at <= now
-- `revoked?` - revoked_at present?
-- `valid_token?` - not expired and not revoked
-- `revoke!` - set revoked_at to now
-
-**Class Methods:**
-- `find_valid_by_token(token)` - find in active scope
-- `revoke_all_for_teacher(teacher_id)` - revoke all tokens for teacher
+**Required Capabilities:**
+- Query only active tokens (not revoked and not expired)
+- Find a valid token by its token string
+- Check if a token is expired
+- Check if a token is revoked
+- Check if a token is valid (not expired and not revoked)
+- Revoke a single token
+- Revoke all tokens for a specific teacher
 
 ---
 
 ### Base Controller (Updated)
 
-Add authentication to `app/controllers/api/v1/base_controller.rb`:
+Add authentication to the base controller.
 
-```ruby
-module Api
-  module V1
-    class BaseController < ApplicationController
-      before_action :authenticate_request
+**New Behaviors:**
+- Authenticate requests before all actions
+- Make current teacher available to child controllers
+- Child controllers can skip authentication for specific actions
 
-      attr_reader :current_teacher
-
-      private
-
-      def authenticate_request
-        token = extract_token_from_header
-        return render_unauthorized('Missing authentication token') if token.nil?
-
-        decoded = JwtService.decode(token)
-        return render_unauthorized('Invalid or expired token') if decoded.nil?
-
-        @current_teacher = Teacher.find_by(id: decoded[:teacher_id])
-        return render_unauthorized('Teacher not found') if @current_teacher.nil?
-        return render_unauthorized('Account is deactivated') unless @current_teacher.is_active?
-      end
-
-      def extract_token_from_header
-        header = request.headers['Authorization']
-        return nil unless header
-        header.split(' ').last
-      end
-
-      # ... all response helpers from Phase 0 ...
-    end
-  end
-end
-```
+**Authentication Logic:**
+1. Extract token from Authorization header (Bearer scheme)
+2. Decode token using JWT service
+3. Find teacher by decoded teacher_id
+4. Verify teacher exists and is active
+5. Return 401 for any failure
 
 ---
 
-### Routes (Updated)
+### Routes
 
-```ruby
-Rails.application.routes.draw do
-  namespace :api do
-    namespace :v1 do
-      namespace :auth do
-        post 'register', to: 'authentication#register'
-        post 'login', to: 'authentication#login'
-        post 'refresh', to: 'authentication#refresh'
-        post 'logout', to: 'authentication#logout'
-        post 'password/reset-request', to: 'passwords#reset_request'
-        post 'password/reset', to: 'passwords#reset'
-        post 'password/change', to: 'passwords#change'
-        post 'email/verify', to: 'email_verification#verify'
-        post 'email/resend-verification', to: 'email_verification#resend'
-      end
-    end
-  end
+Add to api/v1 namespace under auth namespace:
 
-  get '/health', to: proc { [200, {}, ['OK']] }
-end
-```
+| Method | Path | Controller#Action |
+|--------|------|-------------------|
+| POST | /auth/register | authentication#register |
+| POST | /auth/login | authentication#login |
+| POST | /auth/refresh | authentication#refresh |
+| POST | /auth/logout | authentication#logout |
+| POST | /auth/password/reset-request | passwords#reset_request |
+| POST | /auth/password/reset | passwords#reset |
+| POST | /auth/password/change | passwords#change |
+| POST | /auth/email/verify | email_verification#verify |
+| POST | /auth/email/resend-verification | email_verification#resend |
 
 ---
 
@@ -528,33 +357,28 @@ end
 
 **Endpoints:**
 
-`POST /api/v1/auth/register`
-- Accept: first_name, last_name, email, password
-- Create teacher
-- Return 201 with teacher data (exclude password_digest)
-- Return 422 for validation errors
+| Endpoint | Request | Success | Errors |
+|----------|---------|---------|--------|
+| register | first_name, last_name, email, password | 201, teacher data (no password_digest) | 422 validation errors |
+| login | email, password | 200, access_token + refresh_token | 401 invalid credentials, 401 inactive |
+| refresh | refresh_token | 200, new access_token | 401 invalid/expired/revoked |
+| logout | refresh_token | 204 | 401 invalid token |
 
-`POST /api/v1/auth/login`
-- Accept: email, password
-- Verify credentials and account active
-- Generate access token and refresh token
-- Store refresh token in database
-- Return 200 with tokens
-- Return 401 for invalid credentials or inactive account
+**Login Flow:**
+1. Find teacher by email
+2. Verify password
+3. Check account is active
+4. Generate access token with teacher_id
+5. Generate refresh token
+6. Store refresh token in database (token string, jti, expires_at)
+7. Return both tokens
 
-`POST /api/v1/auth/refresh`
-- Accept: refresh_token
-- Decode and validate refresh token
-- Find in database, verify not revoked/expired
-- Generate new access token
-- Return 200 with new access_token
-- Return 401 for invalid token
-
-`POST /api/v1/auth/logout`
-- Accept: refresh_token
-- Revoke token in database
-- Return 204
-- Return 401 for invalid token
+**Refresh Flow:**
+1. Decode refresh token
+2. Find RefreshToken record by jti
+3. Verify not revoked and not expired
+4. Generate new access token
+5. Return new access token
 
 ---
 
@@ -566,23 +390,13 @@ end
 
 **Endpoints:**
 
-`POST /api/v1/auth/password/reset-request`
-- Accept: email
-- Generate reset token if teacher exists
-- Always return 200 (security)
+| Endpoint | Request | Success | Errors |
+|----------|---------|---------|--------|
+| reset_request | email | 200 (always, for security) | - |
+| reset | token, password | 200 | 400 invalid/expired token |
+| change | current_password, new_password | 200 | 401 wrong current password |
 
-`POST /api/v1/auth/password/reset`
-- Accept: token, password
-- Validate token not expired (2 hour window)
-- Update password, clear token
-- Return 200 or 400
-
-`POST /api/v1/auth/password/change`
-- Requires authentication
-- Accept: current_password, new_password
-- Verify current password
-- Update password
-- Return 200 or 401
+**Note:** change requires authentication
 
 ---
 
@@ -594,23 +408,20 @@ end
 
 **Endpoints:**
 
-`POST /api/v1/auth/email/verify`
-- Accept: token
-- Find teacher, verify email
-- Return 200 or 400
+| Endpoint | Request | Success | Errors |
+|----------|---------|---------|--------|
+| verify | token | 200 | 400 invalid token |
+| resend | - | 200 | - |
 
-`POST /api/v1/auth/email/resend-verification`
-- Requires authentication
-- Generate new token
-- Return 200
+**Note:** resend requires authentication
 
 ---
 
 ### Testing Requirements
 
 **JWT Service:**
-- Encodes payload into valid JWT
-- Decoded token contains original payload with symbolized keys
+- Encodes payload into valid JWT string
+- Decoded token contains original payload
 - Access tokens expire after configured time
 - Refresh tokens expire after configured time
 - Refresh tokens include unique jti
@@ -619,34 +430,31 @@ end
 - Returns nil for malformed tokens
 
 **Teacher Model:**
-- Validates presence of first_name, last_name, email, password
+- Validates presence of required fields
 - Email must be unique (case insensitive)
 - Email must match valid format
 - Password minimum 8 characters
-- Password is hashed (password_digest differs from input)
+- Password is hashed (not stored as plain text)
 - Email downcased before save
 - Verification token generated on create
-- `find_by_email` is case insensitive
-- `full_name` returns combined name
-- `display_name` returns nickname if present
-- `verify_email!` sets timestamp and clears token
-- `generate_password_reset_token!` creates token
-- `password_reset_token_valid?` false after 2 hours
+- Email lookup is case insensitive
+- Full name and display name work correctly
+- Email verification flow works
+- Password reset token generation and validation works
 - Scopes filter correctly
 
 **Refresh Token Model:**
-- Validates presence of token, jti, expires_at
+- Validates presence of required fields
 - Token and jti must be unique
-- `active` scope excludes revoked and expired
-- `revoke!` sets revoked_at
-- `revoke_all_for_teacher` revokes all for teacher
+- Active scope excludes revoked and expired
+- Revocation works for single token and all tokens for teacher
 
 **Base Controller Authentication:**
 - Returns 401 without token
 - Returns 401 with invalid token
 - Returns 401 with expired token
 - Returns 401 for inactive teacher
-- Sets current_teacher with valid token
+- Sets current teacher with valid token
 
 **Authentication Controller:**
 - Register creates teacher (201)
@@ -678,9 +486,9 @@ end
 - [ ] JWT environment variables configured
 - [ ] Teachers migration created and run
 - [ ] Refresh tokens migration created and run
-- [ ] JwtService implemented and tested
-- [ ] Teacher model with validations, callbacks, methods
-- [ ] RefreshToken model with validations, scopes, methods
+- [ ] JWT service implemented and tested
+- [ ] Teacher model with validations and required capabilities
+- [ ] Refresh token model with validations and required capabilities
 - [ ] Base controller authentication working
 - [ ] Authentication controller endpoints working
 - [ ] Passwords controller endpoints working
@@ -697,16 +505,11 @@ Add student profiles linked to teachers. Teachers can create, view, update, and 
 
 ---
 
-### New Dependencies
+### Dependencies
 
-Add to Gemfile:
-
-```ruby
-# Pagination
-gem "kaminari", "~> 1.2"
-```
-
-Run `bundle install`.
+| Gem | Purpose | Why This Phase | Why This Gem |
+|-----|---------|----------------|--------------|
+| kaminari | Pagination for ActiveRecord collections | Students index is the first list endpoint—can't return unbounded results to mobile clients. | Clean API, well-maintained, plays nice with Rails. Pagy is faster but more manual setup. Will-paginate is older and less actively maintained. |
 
 ---
 
@@ -738,69 +541,48 @@ Run `bundle install`.
 
 ---
 
-### Teacher Model (Updated)
+### Model Updates
 
-Add association:
-
-```ruby
-has_many :students, dependent: :destroy
-```
+**Teacher:** Add association to students (destroyed when teacher deleted)
 
 ---
 
 ### Student Model
 
-**Location:** `app/models/student.rb`
-
-**Associations:**
-- belongs_to :teacher
+**Behaviors:**
+- Belongs to a teacher
+- Destroyed when teacher deleted (via foreign key cascade)
 
 **Validations:**
-- first_name: presence, max length 100
-- last_name: presence, max length 100
-- nickname: max length 100 (optional)
-- grade_level: max length 50 (optional)
 
-**Scopes:**
-- active: `where(is_active: true)`
+| Field | Rules |
+|-------|-------|
+| first_name | presence, max length 100 |
+| last_name | presence, max length 100 |
+| nickname | max length 100 (optional) |
+| grade_level | max length 50 (optional) |
 
-**Instance Methods:**
-- `full_name` - "first_name last_name"
-- `display_name` - nickname or full_name
-- `age` - calculated from date_of_birth
+**Required Capabilities:**
+- Query active students only
+- Get student's full name and display name (nickname if set)
+- Calculate student's age from date of birth
 
 ---
 
 ### Base Controller (Updated)
 
-Add pagination helper:
+Add pagination helper.
 
-```ruby
-def paginate(collection)
-  paginated = collection.page(params[:page]).per(params[:limit] || 20)
-  {
-    data: paginated,
-    meta: {
-      page: paginated.current_page,
-      limit: paginated.limit_value,
-      total: paginated.total_count,
-      total_pages: paginated.total_pages,
-      has_next: !paginated.last_page?,
-      has_prev: !paginated.first_page?
-    }
-  }
-end
-```
+**Pagination Behavior:**
+- Accept page and limit params (default limit: 20)
+- Return paginated data with metadata: page, limit, total, total_pages, has_next, has_prev
 
 ---
 
-### Routes (Updated)
+### Routes
 
 Add to api/v1 namespace:
-
-```ruby
-resources :students
-```
+- resources :students (full CRUD)
 
 ---
 
@@ -810,31 +592,19 @@ resources :students
 
 **Endpoints:**
 
-`GET /api/v1/students`
-- List current teacher's students
-- Support pagination (page, limit params)
-- Support filtering by is_active
-- Return paginated response
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | /students | List current teacher's students (paginated) |
+| GET | /students/:id | Show student details |
+| POST | /students | Create student for current teacher |
+| PATCH | /students/:id | Update student |
+| DELETE | /students/:id | Delete student |
 
-`GET /api/v1/students/:id`
-- Show student details
-- Return 404 if not found or not owned by teacher
+**Index Filters:**
+- is_active (boolean)
+- Pagination: page, limit
 
-`POST /api/v1/students`
-- Create student for current teacher
-- Return 201 with student data
-- Return 422 for validation errors
-
-`PATCH /api/v1/students/:id`
-- Update student
-- Return 200 with updated data
-- Return 404 if not found
-- Return 422 for validation errors
-
-`DELETE /api/v1/students/:id`
-- Delete student
-- Return 204
-- Return 404 if not found
+**Authorization:** All actions scoped to current teacher's students only
 
 ---
 
@@ -843,10 +613,9 @@ resources :students
 **Student Model:**
 - Validates presence of first_name, last_name
 - Belongs to teacher
-- `full_name` returns combined name
-- `display_name` returns nickname if present
-- `age` calculates correctly from date_of_birth
-- `active` scope filters correctly
+- Full name and display name work correctly
+- Age calculates correctly from date_of_birth
+- Active scope filters correctly
 
 **Students Controller:**
 - Index returns only current teacher's students
@@ -872,8 +641,8 @@ resources :students
 
 - [ ] kaminari gem installed
 - [ ] Students migration created and run
-- [ ] Student model with validations and methods
-- [ ] Teacher has_many :students association added
+- [ ] Student model with validations and required capabilities
+- [ ] Teacher association to students added
 - [ ] Pagination helper added to base controller
 - [ ] Students controller implemented
 - [ ] Routes configured
@@ -886,6 +655,12 @@ resources :students
 ### Goal
 
 Add subjects and calendar events. Teachers can create subjects (like "Math" or "Science") and schedule events on the calendar.
+
+---
+
+### Dependencies
+
+None—all required gems already installed.
 
 ---
 
@@ -935,75 +710,67 @@ Add subjects and calendar events. Teachers can create subjects (like "Math" or "
 - start_time
 - [teacher_id, start_time]
 
----
-
-### Teacher Model (Updated)
-
-Add associations:
-
-```ruby
-has_many :subjects, dependent: :destroy
-has_many :calendar_events, dependent: :destroy
-```
+**Foreign Keys:**
+- teacher_id references teachers(id)
+- student_id references students(id) with ON DELETE SET NULL
+- subject_id references subjects(id) with ON DELETE SET NULL
 
 ---
 
-### Student Model (Updated)
+### Model Updates
 
-Add association:
+**Teacher:** Add associations to subjects and calendar events (destroyed when teacher deleted)
 
-```ruby
-has_many :calendar_events, dependent: :nullify
-```
+**Student:** Add association to calendar events (set null when student deleted)
 
 ---
 
 ### Subject Model
 
-**Location:** `app/models/subject.rb`
-
-**Associations:**
-- belongs_to :teacher
-- has_many :calendar_events, dependent: :nullify
+**Behaviors:**
+- Belongs to a teacher
+- Has many calendar events (set null when subject deleted)
+- Destroyed when teacher deleted
 
 **Validations:**
-- name: presence, max length 100, unique per teacher
-- color: valid hex format (optional)
 
-**Scopes:**
-- active: `where(is_active: true)`
+| Field | Rules |
+|-------|-------|
+| name | presence, max length 100, unique per teacher |
+| color | valid hex format (optional) |
+
+**Required Capabilities:**
+- Query active subjects only
 
 ---
 
 ### Calendar Event Model
 
-**Location:** `app/models/calendar_event.rb`
-
-**Associations:**
-- belongs_to :teacher
-- belongs_to :student, optional: true
-- belongs_to :subject, optional: true
+**Behaviors:**
+- Belongs to a teacher (required)
+- Belongs to a student (optional)
+- Belongs to a subject (optional)
 
 **Validations:**
-- title: presence, max length 255
-- start_time: presence
-- end_time: presence, must be after start_time
 
-**Scopes:**
-- for_date_range(start_date, end_date)
-- for_student(student_id)
-- for_subject(subject_id)
+| Field | Rules |
+|-------|-------|
+| title | presence, max length 255 |
+| start_time | presence |
+| end_time | presence, must be after start_time |
+
+**Required Capabilities:**
+- Query events within a date range
+- Query events for a specific student
+- Query events for a specific subject
 
 ---
 
-### Routes (Updated)
+### Routes
 
 Add to api/v1 namespace:
-
-```ruby
-resources :subjects
-resources :calendar_events
-```
+- resources :subjects (full CRUD)
+- resources :calendar_events (full CRUD)
 
 ---
 
@@ -1011,7 +778,7 @@ resources :calendar_events
 
 **Location:** `app/controllers/api/v1/subjects_controller.rb`
 
-Standard CRUD for current teacher's subjects.
+Standard CRUD scoped to current teacher's subjects.
 
 ---
 
@@ -1021,23 +788,22 @@ Standard CRUD for current teacher's subjects.
 
 **Endpoints:**
 
-`GET /api/v1/calendar_events`
-- List events with date range filtering (required: start_date, end_date)
-- Optional filters: student_id, subject_id
-- Return events in range
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | /calendar_events | List events (requires start_date, end_date params) |
+| GET | /calendar_events/:id | Show event details |
+| POST | /calendar_events | Create event |
+| PATCH | /calendar_events/:id | Update event |
+| DELETE | /calendar_events/:id | Delete event |
 
-`GET /api/v1/calendar_events/:id`
-- Show event details
+**Index Filters:**
+- start_date, end_date (required)
+- student_id (optional)
+- subject_id (optional)
 
-`POST /api/v1/calendar_events`
-- Create event
-- Validate student and subject belong to teacher
-
-`PATCH /api/v1/calendar_events/:id`
-- Update event
-
-`DELETE /api/v1/calendar_events/:id`
-- Delete event
+**Create/Update Validation:**
+- If student_id provided, verify student belongs to current teacher
+- If subject_id provided, verify subject belongs to current teacher
 
 ---
 
@@ -1047,7 +813,7 @@ Standard CRUD for current teacher's subjects.
 - Validates presence of name
 - Name unique per teacher (can duplicate across teachers)
 - Belongs to teacher
-- `active` scope filters correctly
+- Active scope filters correctly
 
 **Calendar Event Model:**
 - Validates presence of title, start_time, end_time
@@ -1073,7 +839,7 @@ Standard CRUD for current teacher's subjects.
 - [ ] Subjects migration created and run
 - [ ] Calendar events migration created and run
 - [ ] Subject model implemented
-- [ ] CalendarEvent model implemented
+- [ ] Calendar event model implemented
 - [ ] Teacher associations added
 - [ ] Student association added
 - [ ] Subjects controller implemented
@@ -1088,6 +854,12 @@ Standard CRUD for current teacher's subjects.
 ### Goal
 
 Add assignments (homework, projects) and tasks (to-do items). Assignments are tied to students and optionally subjects. Tasks are standalone to-do items for the teacher.
+
+---
+
+### Dependencies
+
+None—all required gems already installed.
 
 ---
 
@@ -1120,6 +892,11 @@ Add assignments (homework, projects) and tasks (to-do items). Assignments are ti
 
 **Status values:** pending, in_progress, completed, graded
 
+**Foreign Keys:**
+- teacher_id references teachers(id)
+- student_id references students(id) with ON DELETE CASCADE
+- subject_id references subjects(id) with ON DELETE SET NULL
+
 ---
 
 **Tasks Table:**
@@ -1150,96 +927,85 @@ Add assignments (homework, projects) and tasks (to-do items). Assignments are ti
 
 ### Model Updates
 
-**Teacher:**
-```ruby
-has_many :assignments, dependent: :destroy
-has_many :tasks, dependent: :destroy
-```
+**Teacher:** Add associations to assignments and tasks (destroyed when teacher deleted)
 
-**Student:**
-```ruby
-has_many :assignments, dependent: :destroy
-```
+**Student:** Add association to assignments (destroyed when student deleted)
 
-**Subject:**
-```ruby
-has_many :assignments, dependent: :nullify
-```
+**Subject:** Add association to assignments (set null when subject deleted)
 
 ---
 
 ### Assignment Model
 
-**Location:** `app/models/assignment.rb`
-
-**Associations:**
-- belongs_to :teacher
-- belongs_to :student
-- belongs_to :subject, optional: true
+**Behaviors:**
+- Belongs to a teacher (required)
+- Belongs to a student (required)
+- Belongs to a subject (optional)
+- Destroyed when student deleted
 
 **Validations:**
-- title: presence, max length 255
-- status: inclusion in valid values
 
-**Scopes:**
-- by_status(status)
-- due_between(start_date, end_date)
-- for_student(student_id)
-- overdue (due_date < today and not completed/graded)
+| Field | Rules |
+|-------|-------|
+| title | presence, max length 255 |
+| status | inclusion in valid values |
 
-**Instance Methods:**
-- `overdue?`
-- `grade!` - set grade and graded_at
+**Required Capabilities:**
+- Query by status
+- Query by due date range
+- Query by student
+- Query overdue assignments (past due and not completed/graded)
+- Check if assignment is overdue
+- Grade an assignment (set grade, max_grade, graded_at, status)
 
 ---
 
 ### Task Model
 
-**Location:** `app/models/task.rb`
-
-**Associations:**
-- belongs_to :teacher
+**Behaviors:**
+- Belongs to a teacher
+- Destroyed when teacher deleted
 
 **Validations:**
-- title: presence, max length 255
-- priority: inclusion in valid values
-- status: inclusion in valid values
 
-**Scopes:**
-- by_status(status)
-- by_priority(priority)
-- due_between(start_date, end_date)
-- overdue
+| Field | Rules |
+|-------|-------|
+| title | presence, max length 255 |
+| priority | inclusion in valid values |
+| status | inclusion in valid values |
 
-**Instance Methods:**
-- `complete!` - set status and completed_at
-- `overdue?`
+**Required Capabilities:**
+- Query by status
+- Query by priority
+- Query by due date range
+- Query overdue tasks (past due and pending)
+- Check if task is overdue
+- Complete a task (set status and timestamp)
 
 ---
 
-### Routes (Updated)
+### Routes
 
-```ruby
-resources :assignments do
-  member do
-    patch :grade
-  end
-end
+Add to api/v1 namespace:
 
-resources :tasks do
-  member do
-    patch :complete
-  end
-end
-```
+**Assignments:**
+- resources :assignments (full CRUD)
+- PATCH /assignments/:id/grade (member route)
+
+**Tasks:**
+- resources :tasks (full CRUD)
+- PATCH /tasks/:id/complete (member route)
 
 ---
 
 ### Controllers
 
-Standard CRUD plus:
-- Assignments: `grade` action to set grade
-- Tasks: `complete` action to mark done
+**Assignments Controller:** `app/controllers/api/v1/assignments_controller.rb`
+- Standard CRUD plus grade action
+- Validate student/subject ownership
+
+**Tasks Controller:** `app/controllers/api/v1/tasks_controller.rb`
+- Standard CRUD plus complete action
 
 ---
 
@@ -1249,13 +1015,13 @@ Standard CRUD plus:
 - Validates presence of title
 - Validates status values
 - Belongs to teacher and student
-- `overdue?` calculates correctly
+- Overdue check calculates correctly
 - Scopes filter correctly
 
 **Task Model:**
 - Validates presence of title
 - Validates priority and status values
-- `complete!` sets status and timestamp
+- Complete action sets status and timestamp
 - Scopes filter correctly
 
 **Controllers:**
@@ -1288,6 +1054,12 @@ Add report cards with grade entries per subject for each student.
 
 ---
 
+### Dependencies
+
+None—all required gems already installed.
+
+---
+
 ### Database Schema
 
 **Report Cards Table:**
@@ -1310,6 +1082,10 @@ Add report cards with grade entries per subject for each student.
 - student_id
 - [student_id, period_start]
 
+**Foreign Keys:**
+- teacher_id references teachers(id)
+- student_id references students(id) with ON DELETE CASCADE
+
 ---
 
 **Grade Entries Table:**
@@ -1329,66 +1105,66 @@ Add report cards with grade entries per subject for each student.
 - subject_id
 - [report_card_id, subject_id] (unique)
 
+**Foreign Keys:**
+- report_card_id references report_cards(id) with ON DELETE CASCADE
+- subject_id references subjects(id)
+
 ---
 
 ### Model Updates
 
-**Teacher:**
-```ruby
-has_many :report_cards, dependent: :destroy
-```
+**Teacher:** Add association to report cards (destroyed when teacher deleted)
 
-**Student:**
-```ruby
-has_many :report_cards, dependent: :destroy
-```
+**Student:** Add association to report cards (destroyed when student deleted)
 
 ---
 
 ### Report Card Model
 
-**Location:** `app/models/report_card.rb`
-
-**Associations:**
-- belongs_to :teacher
-- belongs_to :student
-- has_many :grade_entries, dependent: :destroy
+**Behaviors:**
+- Belongs to a teacher (required)
+- Belongs to a student (required)
+- Has many grade entries (destroyed when report card deleted)
+- Destroyed when student deleted
 
 **Validations:**
-- title: presence
-- period_start: presence
-- period_end: presence, after period_start
 
-**Instance Methods:**
-- `issue!` - set issued_at
-- `issued?`
+| Field | Rules |
+|-------|-------|
+| title | presence |
+| period_start | presence |
+| period_end | presence, must be after period_start |
+
+**Required Capabilities:**
+- Issue a report card (set timestamp)
+- Check if report card has been issued
 
 ---
 
 ### Grade Entry Model
 
-**Location:** `app/models/grade_entry.rb`
-
-**Associations:**
-- belongs_to :report_card
-- belongs_to :subject
+**Behaviors:**
+- Belongs to a report card (required)
+- Belongs to a subject (required)
+- Destroyed when report card deleted
 
 **Validations:**
-- grade: presence
-- subject unique per report card
+
+| Field | Rules |
+|-------|-------|
+| grade | presence |
+| subject_id | unique per report card |
 
 ---
 
-### Routes (Updated)
+### Routes
 
-```ruby
-resources :report_cards do
-  member do
-    patch :issue
-  end
-  resources :grade_entries, only: [:create, :update, :destroy]
-end
-```
+Add to api/v1 namespace:
+
+**Report Cards:**
+- resources :report_cards (full CRUD)
+- PATCH /report_cards/:id/issue (member route)
+- Nested: resources :grade_entries, only: [:create, :update, :destroy]
 
 ---
 
@@ -1397,7 +1173,7 @@ end
 **Report Card Model:**
 - Validates required fields
 - period_end after period_start
-- `issue!` sets timestamp
+- Issue action sets timestamp
 
 **Grade Entry Model:**
 - Validates grade presence
@@ -1414,8 +1190,8 @@ end
 
 - [ ] Report cards migration created and run
 - [ ] Grade entries migration created and run
-- [ ] ReportCard model implemented
-- [ ] GradeEntry model implemented
+- [ ] Report card model implemented
+- [ ] Grade entry model implemented
 - [ ] Associations added
 - [ ] Controllers implemented
 - [ ] Routes configured
@@ -1431,6 +1207,12 @@ Add expense categories and expenses for tracking homeschool costs.
 
 ---
 
+### Dependencies
+
+None—all required gems already installed.
+
+---
+
 ### Database Schema
 
 **Expense Categories Table:**
@@ -1441,7 +1223,7 @@ Add expense categories and expenses for tracking homeschool costs.
 | teacher_id | uuid | Foreign key, not null |
 | name | string | Not null |
 | color | string | Nullable |
-| budget | decimal | Nullable |
+| budget | decimal(10,2) | Nullable |
 | is_active | boolean | Default: true |
 | created_at | datetime | Not null |
 | updated_at | datetime | Not null |
@@ -1461,7 +1243,7 @@ Add expense categories and expenses for tracking homeschool costs.
 | expense_category_id | uuid | Foreign key, nullable |
 | student_id | uuid | Foreign key, nullable |
 | description | string | Not null |
-| amount | decimal | Not null |
+| amount | decimal(10,2) | Not null |
 | date | date | Not null |
 | vendor | string | Nullable |
 | receipt_url | string | Nullable |
@@ -1475,71 +1257,69 @@ Add expense categories and expenses for tracking homeschool costs.
 - student_id
 - date
 
+**Foreign Keys:**
+- teacher_id references teachers(id)
+- expense_category_id references expense_categories(id) with ON DELETE SET NULL
+- student_id references students(id) with ON DELETE SET NULL
+
 ---
 
 ### Model Updates
 
-**Teacher:**
-```ruby
-has_many :expense_categories, dependent: :destroy
-has_many :expenses, dependent: :destroy
-```
+**Teacher:** Add associations to expense categories and expenses (destroyed when teacher deleted)
 
-**Student:**
-```ruby
-has_many :expenses, dependent: :nullify
-```
+**Student:** Add association to expenses (set null when student deleted)
 
 ---
 
 ### Expense Category Model
 
-**Location:** `app/models/expense_category.rb`
-
-**Associations:**
-- belongs_to :teacher
-- has_many :expenses, dependent: :nullify
+**Behaviors:**
+- Belongs to a teacher
+- Has many expenses (set null when category deleted)
+- Destroyed when teacher deleted
 
 **Validations:**
-- name: presence, unique per teacher
-- budget: numericality, greater than 0 (if present)
 
-**Scopes:**
-- active
+| Field | Rules |
+|-------|-------|
+| name | presence, unique per teacher |
+| budget | numericality, greater than 0 (if present) |
 
-**Instance Methods:**
-- `total_spent(start_date, end_date)` - sum expenses in range
-- `budget_remaining(start_date, end_date)`
+**Required Capabilities:**
+- Query active categories only
+- Calculate total spent in a date range
+- Calculate remaining budget in a date range
 
 ---
 
 ### Expense Model
 
-**Location:** `app/models/expense.rb`
-
-**Associations:**
-- belongs_to :teacher
-- belongs_to :expense_category, optional: true
-- belongs_to :student, optional: true
+**Behaviors:**
+- Belongs to a teacher (required)
+- Belongs to an expense category (optional)
+- Belongs to a student (optional)
 
 **Validations:**
-- description: presence
-- amount: presence, numericality greater than 0
-- date: presence
 
-**Scopes:**
-- for_date_range(start_date, end_date)
-- for_category(category_id)
-- for_student(student_id)
+| Field | Rules |
+|-------|-------|
+| description | presence |
+| amount | presence, numericality greater than 0 |
+| date | presence |
+
+**Required Capabilities:**
+- Query by date range
+- Query by category
+- Query by student
 
 ---
 
-### Routes (Updated)
+### Routes
 
-```ruby
-resources :expense_categories
-resources :expenses
-```
+Add to api/v1 namespace:
+- resources :expense_categories (full CRUD)
+- resources :expenses (full CRUD)
 
 ---
 
@@ -1564,7 +1344,7 @@ resources :expenses
 
 - [ ] Expense categories migration created and run
 - [ ] Expenses migration created and run
-- [ ] ExpenseCategory model implemented
+- [ ] Expense category model implemented
 - [ ] Expense model implemented
 - [ ] Associations added
 - [ ] Controllers implemented
@@ -1578,6 +1358,12 @@ resources :expenses
 ### Goal
 
 Add lesson plans that tie together subjects, students, and calendar events.
+
+---
+
+### Dependencies
+
+None—all required gems already installed.
 
 ---
 
@@ -1606,6 +1392,10 @@ Add lesson plans that tie together subjects, students, and calendar events.
 - subject_id
 - is_template
 
+**Foreign Keys:**
+- teacher_id references teachers(id)
+- subject_id references subjects(id) with ON DELETE SET NULL
+
 ---
 
 **Lesson Plan Students Table (join):**
@@ -1619,69 +1409,63 @@ Add lesson plans that tie together subjects, students, and calendar events.
 | updated_at | datetime | Not null |
 
 **Indexes:**
+- lesson_plan_id
+- student_id
 - [lesson_plan_id, student_id] (unique)
+
+**Foreign Keys:**
+- lesson_plan_id references lesson_plans(id) with ON DELETE CASCADE
+- student_id references students(id) with ON DELETE CASCADE
 
 ---
 
 ### Model Updates
 
-**Teacher:**
-```ruby
-has_many :lesson_plans, dependent: :destroy
-```
+**Teacher:** Add association to lesson plans (destroyed when teacher deleted)
 
-**Subject:**
-```ruby
-has_many :lesson_plans, dependent: :nullify
-```
+**Subject:** Add association to lesson plans (set null when subject deleted)
 
 ---
 
 ### Lesson Plan Model
 
-**Location:** `app/models/lesson_plan.rb`
-
-**Associations:**
-- belongs_to :teacher
-- belongs_to :subject, optional: true
-- has_many :lesson_plan_students, dependent: :destroy
-- has_many :students, through: :lesson_plan_students
+**Behaviors:**
+- Belongs to a teacher (required)
+- Belongs to a subject (optional)
+- Has many students through join table
+- Destroyed when teacher deleted
 
 **Validations:**
-- title: presence, max length 255
-- duration_minutes: numericality, greater than 0 (if present)
 
-**Scopes:**
-- templates: `where(is_template: true)`
-- for_subject(subject_id)
+| Field | Rules |
+|-------|-------|
+| title | presence, max length 255 |
+| duration_minutes | numericality, greater than 0 (if present) |
 
-**Instance Methods:**
-- `duplicate` - create copy (for templates)
+**Required Capabilities:**
+- Query template lesson plans only
+- Query by subject
+- Duplicate a lesson plan (create copy for reuse)
 
 ---
 
-### Lesson Plan Student Model
+### Lesson Plan Student Model (Join)
 
-**Location:** `app/models/lesson_plan_student.rb`
-
-**Associations:**
-- belongs_to :lesson_plan
-- belongs_to :student
+**Behaviors:**
+- Belongs to a lesson plan
+- Belongs to a student
+- Destroyed when either lesson plan or student deleted
 
 **Validations:**
-- student unique per lesson plan
+- student_id unique per lesson plan
 
 ---
 
-### Routes (Updated)
+### Routes
 
-```ruby
-resources :lesson_plans do
-  member do
-    post :duplicate
-  end
-end
-```
+Add to api/v1 namespace:
+- resources :lesson_plans (full CRUD)
+- POST /lesson_plans/:id/duplicate (member route)
 
 ---
 
@@ -1690,7 +1474,7 @@ end
 **Lesson Plan Model:**
 - Validates title presence
 - Many-to-many with students works
-- `duplicate` creates copy
+- Duplicate creates copy
 
 **Controllers:**
 - CRUD operations work
@@ -1703,8 +1487,8 @@ end
 
 - [ ] Lesson plans migration created and run
 - [ ] Lesson plan students migration created and run
-- [ ] LessonPlan model implemented
-- [ ] LessonPlanStudent model implemented
+- [ ] Lesson plan model implemented
+- [ ] Lesson plan student model implemented
 - [ ] Associations added
 - [ ] Controller with duplicate action
 - [ ] Routes configured
@@ -1720,134 +1504,69 @@ Add production dependencies, file uploads, background jobs, and deployment confi
 
 ---
 
-### New Dependencies
+### Dependencies
 
-Add to Gemfile:
-
-```ruby
-# Background Jobs
-gem "sidekiq", "~> 7.1"
-gem "redis", ">= 4.0.1"
-
-# File Uploads
-gem "aws-sdk-s3", "~> 1.136"
-gem "image_processing", "~> 1.12"
-```
-
-Run `bundle install`.
+| Gem | Purpose | Why This Phase | Why This Gem |
+|-----|---------|----------------|--------------|
+| sidekiq | Background job processing | Email delivery (verification, password reset) should be async in production—can't block requests waiting for SMTP. | Fast, battle-tested, great dashboard. Good_job is a solid DB-based alternative if you want to avoid Redis. Resque is older and slower. |
+| redis | In-memory data store for Sidekiq | Required by Sidekiq for job queue storage. | Required by Sidekiq. No alternative if using Sidekiq. |
+| aws-sdk-s3 | S3 file uploads for Active Storage | Profile images and receipt uploads need cloud storage in production—local disk doesn't scale and doesn't persist on Heroku. | Official AWS SDK. Shrine is an alternative to Active Storage entirely, but Active Storage is built-in and simpler to start. |
+| image_processing | Resize/transform uploaded images | Profile images need thumbnails—can't serve full-size images to mobile clients. | Required by Active Storage for variants. Uses libvips (fast) or ImageMagick under the hood. |
 
 ---
 
-### Environment Variables (Updated)
+### Environment Variables
 
-Add to `.env`:
-
-```bash
-# Redis
-REDIS_URL=redis://localhost:6379/0
-
-# AWS S3
-AWS_ACCESS_KEY_ID=your-access-key
-AWS_SECRET_ACCESS_KEY=your-secret-key
-AWS_REGION=us-east-1
-AWS_BUCKET=homeschool-app-uploads
-```
+| Variable | Description |
+|----------|-------------|
+| REDIS_URL | Redis connection string |
+| AWS_ACCESS_KEY_ID | AWS access key |
+| AWS_SECRET_ACCESS_KEY | AWS secret key |
+| AWS_REGION | AWS region (e.g., us-east-1) |
+| AWS_BUCKET | S3 bucket name |
 
 ---
 
 ### Active Storage Setup
 
-```bash
-rails active_storage:install
-rails db:migrate
-```
-
-Configure S3 in `config/storage.yml`:
-
-```yaml
-amazon:
-  service: S3
-  access_key_id: <%= ENV['AWS_ACCESS_KEY_ID'] %>
-  secret_access_key: <%= ENV['AWS_SECRET_ACCESS_KEY'] %>
-  region: <%= ENV['AWS_REGION'] %>
-  bucket: <%= ENV['AWS_BUCKET'] %>
-```
-
-Set production storage in `config/environments/production.rb`:
-
-```ruby
-config.active_storage.service = :amazon
-```
+- Run Active Storage installation
+- Configure S3 service in storage.yml
+- Set production storage service to S3
 
 ---
 
 ### Sidekiq Configuration
 
-Create `config/initializers/sidekiq.rb`:
-
-```ruby
-Sidekiq.configure_server do |config|
-  config.redis = { url: ENV['REDIS_URL'] }
-end
-
-Sidekiq.configure_client do |config|
-  config.redis = { url: ENV['REDIS_URL'] }
-end
-```
+- Configure server and client Redis connections
+- Create initializer
 
 ---
 
 ### File Uploads
 
-Add to Teacher model:
+**Add attachments to models:**
 
-```ruby
-has_one_attached :profile_image
-```
-
-Add to Student model:
-
-```ruby
-has_one_attached :profile_image
-```
-
-Add to Expense model:
-
-```ruby
-has_one_attached :receipt
-```
+| Model | Attachment |
+|-------|------------|
+| Teacher | profile_image |
+| Student | profile_image |
+| Expense | receipt |
 
 ---
 
-### CORS (Updated for Production)
+### CORS (Updated)
 
-```ruby
-Rails.application.config.middleware.insert_before 0, Rack::Cors do
-  allow do
-    origins ENV.fetch('FRONTEND_URL', 'http://localhost:8081')
-    
-    resource '*',
-      headers: :any,
-      methods: [:get, :post, :put, :patch, :delete, :options, :head],
-      expose: ['Authorization']
-  end
-end
-```
+- Change origins to use ENV for production flexibility
 
 ---
 
-### Email Jobs
+### Email Configuration
 
 Create mailers for:
 - Email verification
 - Password reset
-- (Future: assignment reminders, etc.)
 
-Use Sidekiq for async delivery:
-
-```ruby
-UserMailer.verification_email(teacher).deliver_later
-```
+Use async delivery via background jobs.
 
 ---
 
@@ -1859,7 +1578,7 @@ UserMailer.verification_email(teacher).deliver_later
 - S3 configuration valid (use mocks in test)
 
 **Background Jobs:**
-- Sidekiq processes jobs
+- Job processor handles jobs
 - Mailers queue correctly
 
 **CORS:**
@@ -1887,37 +1606,30 @@ UserMailer.verification_email(teacher).deliver_later
 After all phases, here are the complete associations:
 
 **Teacher:**
-```ruby
-has_many :refresh_tokens, dependent: :destroy      # Phase 1
-has_many :students, dependent: :destroy            # Phase 2
-has_many :subjects, dependent: :destroy            # Phase 3
-has_many :calendar_events, dependent: :destroy     # Phase 3
-has_many :assignments, dependent: :destroy         # Phase 4
-has_many :tasks, dependent: :destroy               # Phase 4
-has_many :report_cards, dependent: :destroy        # Phase 5
-has_many :expense_categories, dependent: :destroy  # Phase 6
-has_many :expenses, dependent: :destroy            # Phase 6
-has_many :lesson_plans, dependent: :destroy        # Phase 7
-```
+- has_many refresh_tokens (Phase 1)
+- has_many students (Phase 2)
+- has_many subjects (Phase 3)
+- has_many calendar_events (Phase 3)
+- has_many assignments (Phase 4)
+- has_many tasks (Phase 4)
+- has_many report_cards (Phase 5)
+- has_many expense_categories (Phase 6)
+- has_many expenses (Phase 6)
+- has_many lesson_plans (Phase 7)
 
 **Student:**
-```ruby
-belongs_to :teacher                                # Phase 2
-has_many :calendar_events, dependent: :nullify     # Phase 3
-has_many :assignments, dependent: :destroy         # Phase 4
-has_many :report_cards, dependent: :destroy        # Phase 5
-has_many :expenses, dependent: :nullify            # Phase 6
-has_many :lesson_plan_students, dependent: :destroy # Phase 7
-has_many :lesson_plans, through: :lesson_plan_students # Phase 7
-```
+- belongs_to teacher (Phase 2)
+- has_many calendar_events (Phase 3)
+- has_many assignments (Phase 4)
+- has_many report_cards (Phase 5)
+- has_many expenses (Phase 6)
+- has_many lesson_plans through join (Phase 7)
 
 **Subject:**
-```ruby
-belongs_to :teacher                                # Phase 3
-has_many :calendar_events, dependent: :nullify     # Phase 3
-has_many :assignments, dependent: :nullify         # Phase 4
-has_many :lesson_plans, dependent: :nullify        # Phase 7
-```
+- belongs_to teacher (Phase 3)
+- has_many calendar_events (Phase 3)
+- has_many assignments (Phase 4)
+- has_many lesson_plans (Phase 7)
 
 ---
 
