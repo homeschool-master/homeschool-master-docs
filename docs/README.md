@@ -115,7 +115,7 @@ Android Studio (for Android)
 
 ```bash
 # Clone the API repository
-git clone https://github.com/YOUR-ORG/homeschool-api.git
+git clone git@github.com:homeschool-master/homeschool-master-api.git
 cd homeschool-api
 
 # Install dependencies
@@ -134,7 +134,7 @@ API will be available at `http://localhost:3000`
 
 ```bash
 # Clone the mobile repository
-git clone https://github.com/YOUR-ORG/homeschool-mobile.git
+git clone git@github.com:homeschool-master/homeschool-master-mobile.git
 cd homeschool-mobile
 
 # Install dependencies
@@ -238,13 +238,6 @@ eas build --platform ios
 # Build for Android
 eas build --platform android
 ```
-
-**Common Patterns:**
-- Use React Query for server state
-- Use Zustand for client state (auth, UI)
-- All API calls go through `/src/api/` service layer
-- Components styled with NativeWind (Tailwind)
-- Navigation types defined in `types/navigation.ts`
 
 ---
 
@@ -423,83 +416,3 @@ EXPO_PUBLIC_ENABLE_OFFLINE_MODE=true
 - [Zustand Documentation](https://docs.pmnd.rs/zustand/getting-started/introduction)
 
 ---
-
-## Contributing
-
-### Development Workflow
-
-1. Create a new branch: `git checkout -b feature/your-feature`
-2. Make your changes
-3. Write/update tests
-4. Commit: `git commit -m "feat: add new feature"`
-5. Push: `git push origin feature/your-feature`
-6. Create Pull Request
-
-### Commit Convention
-
-Follow [Conventional Commits](https://www.conventionalcommits.org/):
-
-```
-feat: add student profile images
-fix: resolve calendar timezone issue
-docs: update API documentation
-chore: upgrade dependencies
-refactor: extract validation logic
-test: add assignment tests
-```
-
-### Code Style
-
-**Backend:**
-- Follow [Ruby Style Guide](https://rubystyle.guide/)
-- Run `rubocop` before committing
-- Keep controllers thin, models fat
-- Use service objects for complex logic
-
-**Mobile:**
-- Follow [Airbnb JavaScript Style Guide](https://github.com/airbnb/javascript)
-- Run `eslint` before committing
-- Use TypeScript for all files
-- Keep components under 200 lines
-
----
-
-## Support
-
-### Getting Help
-
-- Email: support@homeschoolapp.com
-- Slack: [homeschool-dev.slack.com]
-- Issues: [GitHub Issues](https://github.com/YOUR-ORG/homeschool-master/issues)
-
-### Reporting Bugs
-
-Please include:
-1. Description of the issue
-2. Steps to reproduce
-3. Expected behavior
-4. Actual behavior
-5. Screenshots (if applicable)
-6. Environment (OS, browser, device)
-
----
-
-## License
-
-MIT License - see [LICENSE](../LICENSE) file for details
-
----
-
-## Changelog
-
-### v1.0.0 (Upcoming)
-- Initial MVP release
-- Core features: Students, Calendar, Assignments, Tasks
-- iOS and Android mobile apps
-- RESTful API with JWT authentication
-
----
-
-**Last Updated:** December 2025  
-**Status:** In Development  
-**Version:** 0.1.0 (Pre-release)
