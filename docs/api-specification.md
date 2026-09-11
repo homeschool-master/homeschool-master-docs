@@ -699,7 +699,12 @@ Get authenticated teacher's profile.
 
 ### 2. Update Teacher Profile
 
-Update authenticated teacher's profile.
+Update authenticated teacher's profile. Identity fields only: this endpoint
+gates on `current_password`.
+
+`time_zone` is **not** accepted here. It moved to
+`PATCH /api/v1/profile/preferences`, which has no password gate. A request
+sending `time_zone` to this endpoint does not update it.
 
 **Endpoint:** `PUT /teachers/me`
 
@@ -735,7 +740,88 @@ Update authenticated teacher's profile.
 
 ---
 
-### 3. Upload Profile Image
+### 3. Update Teacher Preferences
+
+Update the authenticated teacher's non sensitive settings. These are display
+preferences rather than credentials, so this endpoint does **not** require
+`current_password`: the client can persist a detected timezone without being
+able to prompt for a password.
+
+`time_zone` moved here off `PATCH /profile`. Sending `time_zone` to
+`PATCH /profile` no longer updates it: that field is silently ignored there,
+and identity fields sent alongside it still apply as normal.
+
+**Endpoint:** `PATCH /api/v1/profile/preferences`
+
+**Authentication:** Required (session cookie)
+
+**Request Body:**
+```json
+{
+  "time_zone": "Europe/Lisbon"
+}
+```
+
+| Field | Type | Required | Notes |
+|-------|------|----------|-------|
+| time_zone | string | No | IANA identifier, for example `America/New_York`. Validated when present. Rails style names such as "Eastern Time (US & Canada)" are rejected. |
+
+Future display and notification settings belong on this endpoint, not on the
+password gated profile endpoint.
+
+**Success Response (200 OK):**
+
+Returns the full teacher payload. Note the two timezone fields: `time_zone` is
+the raw column and is `null` until the teacher sets one, while
+`effective_time_zone` applies the `America/New_York` fallback. The client uses
+the null in `time_zone` to decide whether to prompt on first login.
+
+```json
+{
+  "success": true,
+  "data": {
+    "id": "uuid-123",
+    "first_name": "Sarah",
+    "last_name": "Johnson",
+    "email": "sarah.johnson@email.com",
+    "time_zone": "Europe/Lisbon",
+    "effective_time_zone": "Europe/Lisbon",
+    "created_at": "2025-01-15T10:00:00Z"
+  }
+}
+```
+
+For a teacher who has never set a zone:
+```json
+{
+  "success": true,
+  "data": {
+    "time_zone": null,
+    "effective_time_zone": "America/New_York"
+  }
+}
+```
+
+**Error Response (422 Unprocessable Content):**
+```json
+{
+  "success": false,
+  "error": {
+    "code": "VALIDATION_ERROR",
+    "message": "Validation failed",
+    "details": {
+      "time_zone": ["is not a recognized IANA time zone"]
+    }
+  }
+}
+```
+
+**Error Response (401 Unauthorized):** returned when no valid session cookie is
+present.
+
+---
+
+### 4. Upload Profile Image
 
 Upload or update teacher profile image.
 
@@ -763,7 +849,7 @@ file: [image file] (JPEG, PNG, max 5MB)
 
 ---
 
-### 4. Delete Teacher Account
+### 5. Delete Teacher Account
 
 Permanently delete teacher account and all associated data.
 
@@ -1035,17 +1121,55 @@ Get calendar events for authenticated teacher.
 **Authentication:** Required
 
 **Query Parameters:**
-- `start_date` (optional): Start of date range (ISO 8601)
-- `end_date` (optional): End of date range (ISO 8601)
+- `start_date` (required): Start of date range (ISO 8601)
+- `end_date` (required): End of date range (ISO 8601)
 - `student_id` (optional): Filter by student
 - `event_type_id` (optional): Filter by event type
 - `include_recurring` (optional): Include recurring events (default: true)
 - `page` (optional): Page number (default: 1)
 - `limit` (optional): Items per page (default: 50)
 
+**How the date range is interpreted:**
+
+A bare date such as `2026-09-17` names one of the **teacher's local days**, not
+a UTC day. `start_date` widens to local midnight and `end_date` to local
+23:59:59 in the teacher's `time_zone`, falling back to `America/New_York` when
+they have not set one, and both convert to UTC for the query. So a single day
+query for the 17th returns the events that teacher sees on the 17th, including
+an 8:00 PM Eastern event whose stored UTC timestamp is on the 18th.
+
+A value that already carries a time component is used **as sent**, with no
+widening. An explicit offset is honored rather than reinterpreted in the
+teacher's zone, so `2026-09-17T00:00:00-04:00` means that instant. A time
+without an offset is read as UTC.
+
+Range matching uses overlap semantics: an event is returned when any part of it
+falls inside the window, so a genuine multi day event appears on every day it
+spans. Stored timestamps are always UTC and are never rewritten by this query.
+
 **Example Request:**
 ```http
 GET /calendar/events?start_date=2025-11-01&end_date=2025-11-30&student_id=uuid-456
+```
+
+A single local day, for a teacher in `America/New_York`:
+```http
+GET /calendar/events?start_date=2026-09-17&end_date=2026-09-17
+```
+resolves to the UTC window `2026-09-17T04:00:00Z` through
+`2026-09-18T03:59:59Z`. The same request from a teacher in `Asia/Tokyo`
+resolves to `2026-09-16T15:00:00Z` through `2026-09-17T14:59:59Z`.
+
+**Error Response (422 Unprocessable Content):** returned when `start_date` or
+`end_date` is missing or cannot be parsed.
+```json
+{
+  "success": false,
+  "error": {
+    "code": "VALIDATION_ERROR",
+    "message": "start_date and end_date are required and must be valid dates"
+  }
+}
 ```
 
 **Success Response (200 OK):**

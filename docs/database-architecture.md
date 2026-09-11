@@ -138,6 +138,7 @@ This document defines the database architecture for a homeschool management mobi
 | newsletter_subscribed | BOOLEAN | DEFAULT FALSE | Newsletter opt-in status |
 | password_hash | VARCHAR(255) | NOT NULL | Encrypted password |
 | profile_image_url | VARCHAR(500) | NULL | Profile picture URL |
+| time_zone | VARCHAR(255) | NULL | IANA identifier, for example "America/New_York" |
 | created_at | TIMESTAMP | DEFAULT NOW() | Account creation date |
 | updated_at | TIMESTAMP | DEFAULT NOW() | Last update timestamp |
 | is_active | BOOLEAN | DEFAULT TRUE | Account status |
@@ -146,6 +147,18 @@ This document defines the database architecture for a homeschool management mobi
 - PRIMARY KEY on `id`
 - UNIQUE INDEX on `email`
 - INDEX on `is_active`
+
+**Notes on `time_zone`:**
+- The client detects the zone and sends it: the server never infers it from IP
+  or request headers, and never rewrites it because a request arrived from
+  somewhere else.
+- Nullable with no database default. Existing rows are not backfilled: the
+  application falls back to `America/New_York` when the column is null, so
+  callers never handle nil.
+- Validated as a recognized IANA identifier when present. Rails style zone
+  names such as "Eastern Time (US & Canada)" are not accepted.
+- The server needs this to render times in contexts with no client to ask,
+  such as reminder emails and exports. Timestamps themselves stay in UTC.
 
 ---
 
@@ -206,11 +219,12 @@ This document defines the database architecture for a homeschool management mobi
 | teacher_id | UUID/INT | FOREIGN KEY, NOT NULL | Event creator |
 | event_type_id | UUID/INT | FOREIGN KEY, NULL | Reference to Event_Types |
 | title | VARCHAR(255) | NOT NULL | Event title |
-| description | TEXT | NULL | Event details |
+| notes | TEXT | NULL | Event details, labelled "Notes" in the UI |
 | location | VARCHAR(255) | NULL | Physical or virtual location |
 | start_time | TIMESTAMP | NOT NULL | Event start date/time |
 | end_time | TIMESTAMP | NULL | Event end date/time |
 | all_day | BOOLEAN | DEFAULT FALSE | All-day event flag |
+| created_time_zone | VARCHAR(255) | NULL | IANA zone the event was created in |
 | recurrence_rule | TEXT | NULL | RRULE format for recurring events |
 | recurrence_end_date | DATE | NULL | When recurring event ends |
 | is_recurring | BOOLEAN | DEFAULT FALSE | Recurring event flag |
@@ -223,6 +237,16 @@ This document defines the database architecture for a homeschool management mobi
 **Notes on Recurrence:**
 - `recurrence_rule` follows iCalendar RRULE format (e.g., "FREQ=WEEKLY;BYDAY=MO,WE,FR")
 - `parent_event_id` links instances to the original recurring event
+
+**Notes on `created_time_zone`:**
+- Populated on create from a client supplied value, falling back to the
+  teacher's effective zone when the client sends none. Validated as a
+  recognized IANA identifier when present.
+- Recorded for future use and read by nothing today. See Future
+  Considerations for why it is captured now.
+- `start_time` and `end_time` remain UTC instants. This column records the
+  wall clock context they were entered in, it does not change how they are
+  stored.
 
 **Indexes:**
 - PRIMARY KEY on `id`
@@ -831,6 +855,26 @@ When implementing co-op features in v2.0, consider:
    - Enhance lesson plan sharing with group visibility
    - Add shared expense pools for co-op activities
    - Implement group calendars
+
+### Floating vs Absolute Events
+
+A homeschool calendar is mostly a recurring daily rhythm anchored to a wall
+clock ("math at 9:00 my morning") rather than to an instant. When a teacher
+moves to a different zone, some events should keep their wall clock time and
+others should keep their instant, and only the teacher can say which.
+
+`created_time_zone` on Calendar_Events exists to make that decision possible
+later. It is the input a floating versus absolute classification will need: the
+zone an event's times were originally entered in. Capturing it at creation is
+cheap, and it avoids having to guess a zone for every historical row during
+that migration, which is not recoverable once the context is lost.
+
+Deliberately not built yet, these are client and product decisions:
+
+- Floating versus absolute semantics, and any per event flag encoding them
+- The shift or keep prompt shown when a teacher changes their zone
+- Bulk rewriting of existing event times
+- Per event timezone editing
 
 ### Scalability Considerations
 

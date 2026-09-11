@@ -205,6 +205,7 @@ Implement complete authentication with JWT tokens, teacher registration, login, 
 | password_reset_token | string | Unique, nullable |
 | password_reset_sent_at | datetime | Nullable |
 | is_active | boolean | Default: true |
+| time_zone | string | Nullable, no database default |
 | created_at | datetime | Not null |
 | updated_at | datetime | Not null |
 
@@ -213,6 +214,53 @@ Implement complete authentication with JWT tokens, teacher registration, login, 
 - email_verification_token (unique)
 - password_reset_token (unique)
 - is_active
+
+**Notes on `time_zone`:**
+- The column arrived with the Phase 3 calendar work, not with the original
+  Phase 1 schema. It is listed here because this is where the teachers table
+  is defined.
+- Stores an IANA identifier such as `America/New_York`, validated with
+  ActiveSupport::TimeZone or TZInfo rather than a hardcoded list. Rails style
+  names such as "Eastern Time (US & Canada)" are not IANA identifiers and are
+  rejected.
+- Accepted on registration and on the preferences endpoint. The client detects
+  the zone and sends it: the server never infers it from IP or request headers,
+  and never rewrites it when a request arrives from elsewhere.
+- Nullable with no default and no backfill. The model exposes a reader that
+  falls back to `America/New_York` when the column is null, so callers never
+  handle nil.
+- The server needs this to render times where there is no client to ask, such
+  as reminder emails and exports. Timestamps stay in UTC.
+
+**Teacher params are split by sensitivity:**
+
+Timezone is a display preference, not a credential. Gating it behind a password
+makes the intended client flow impossible: the app detects a zone change, asks
+the teacher whether to shift or keep, and persists the answer, and it cannot
+prompt for a password to do that. Identity fields keep the gate, preferences do
+not.
+
+| Endpoint | Controller | Params | Password gate |
+|----------|-----------|--------|---------------|
+| PATCH /profile | `profile#update` | first_name, middle_name, last_name | Requires `current_password` |
+| PATCH /profile/preferences | `preferences#update` | time_zone | None, authentication only |
+| PATCH /notifications | `notifications#update` | notify_account_updates, notify_product_updates, notify_homeschool_resources | None, authentication only |
+
+`PATCH /profile` does not accept `time_zone`: a request sending it there does
+not update it. The preferences params list holds `time_zone` only for now, held
+in a constant so future display and notification settings can be added without
+another split.
+
+**Teacher serializer exposes two timezone fields:**
+
+| Field | Value |
+|-------|-------|
+| `time_zone` | The raw column. Null until the teacher sets one. |
+| `effective_time_zone` | The fallback applied reader, never null. |
+
+The client needs the null in `time_zone` to know whether the teacher has ever
+set a zone, which is what decides whether to prompt on first login. Server side
+callers keep using the effective reader.
 
 ---
 
@@ -358,7 +406,7 @@ Add to api/v1 namespace under auth namespace:
 
 | Endpoint | Request | Success | Errors |
 |----------|---------|---------|--------|
-| register | first_name, last_name, email, password | 201, teacher data (no password_digest) | 422 validation errors |
+| register | first_name, last_name, email, password, time_zone (optional) | 201, teacher data (no password_digest) | 422 validation errors |
 | login | email, password | 200, access_token + refresh_token | 401 invalid credentials, 401 inactive |
 | refresh | refresh_token | 200, new access_token | 401 invalid/expired/revoked |
 | logout | refresh_token | 204 | 401 invalid token |
@@ -686,33 +734,78 @@ None—all required gems already installed.
 
 **Calendar Events Table:**
 
+Attendance lives in the Event_Attendees join table, not on a column here: an
+event can have any number of student attendees. See
+`database-architecture.md` for the canonical definition.
+
 | Column | Type | Constraints |
 |--------|------|-------------|
 | id | uuid | Primary key |
 | teacher_id | uuid | Foreign key, not null |
-| student_id | uuid | Foreign key, nullable |
-| subject_id | uuid | Foreign key, nullable |
 | title | string | Not null |
-| description | text | Nullable |
+| notes | text | Nullable |
+| location | string | Nullable |
 | start_time | datetime | Not null |
 | end_time | datetime | Not null |
-| all_day | boolean | Default: false |
-| recurrence_rule | string | Nullable |
-| location | string | Nullable |
+| all_day | boolean | Not null, default: false |
+| created_time_zone | string | Nullable |
 | created_at | datetime | Not null |
 | updated_at | datetime | Not null |
 
 **Indexes:**
 - teacher_id
-- student_id
-- subject_id
-- start_time
 - [teacher_id, start_time]
 
 **Foreign Keys:**
-- teacher_id references teachers(id)
-- student_id references students(id) with ON DELETE SET NULL
-- subject_id references subjects(id) with ON DELETE SET NULL
+- teacher_id references teachers(id) with ON DELETE CASCADE
+
+The freeform text column is named `notes`, matching the label the UI shows.
+Do not call it `description`.
+
+`created_time_zone` records the IANA zone an event's times were entered in. It
+is populated on create from a client supplied value, falling back to the
+teacher's effective zone when the client sends none, and validated as IANA when
+present. Nothing reads it yet: it is the input a later floating versus absolute
+event decision will need, and capturing it now avoids guessing a zone for every
+historical row during that migration. See Future Considerations in
+`database-architecture.md`.
+
+---
+
+**Event Attendees Table:**
+
+| Column | Type | Constraints |
+|--------|------|-------------|
+| id | uuid | Primary key |
+| calendar_event_id | uuid | Foreign key, not null |
+| student_id | uuid | Foreign key, not null |
+| created_at | datetime | Not null |
+| updated_at | datetime | Not null |
+
+**Indexes:**
+- calendar_event_id
+- student_id
+- [calendar_event_id, student_id] (unique)
+
+**Foreign Keys:**
+- calendar_event_id references calendar_events(id) with ON DELETE CASCADE
+- student_id references students(id) with ON DELETE CASCADE
+
+---
+
+**Deferred out of the first calendar slice:**
+
+The first calendar slice ships single occurrence events only. These columns
+and tables are planned but deliberately absent until a later slice:
+
+- `subject_id` on calendar events, and the subjects association
+- `recurrence_rule`, `recurrence_end_date`, `is_recurring`, `parent_event_id`
+- `event_type_id` and the Event_Types table
+- `reminder_minutes`, `color_code`, attachments
+- `attendance_status` on event attendees
+- Floating versus absolute event semantics, the shift or keep prompt shown when
+  a teacher changes zone, bulk event rewriting, and per event timezone editing.
+  `created_time_zone` is captured now so that decision has an input later.
 
 ---
 
@@ -720,7 +813,8 @@ None—all required gems already installed.
 
 **Teacher:** Add associations to subjects and calendar events (destroyed when teacher deleted)
 
-**Student:** Add association to calendar events (set null when student deleted)
+**Student:** Add `has_many :event_attendees` (destroyed when student deleted) and
+`has_many :calendar_events, through: :event_attendees`
 
 ---
 
@@ -747,8 +841,13 @@ None—all required gems already installed.
 
 **Behaviors:**
 - Belongs to a teacher (required)
-- Belongs to a student (optional)
-- Belongs to a subject (optional)
+- Has many event attendees (destroyed with the event)
+- Has many students through event attendees
+- On create, populates `created_time_zone` from the client supplied value,
+  falling back to the teacher's effective zone when absent. A value the client
+  did send is left alone, so an invalid one fails validation instead of being
+  quietly replaced.
+- Subject association deferred to a later slice
 
 **Validations:**
 
@@ -757,11 +856,45 @@ None—all required gems already installed.
 | title | presence, max length 255 |
 | start_time | presence |
 | end_time | presence, must be after start_time |
+| created_time_zone | valid IANA identifier (optional) |
 
 **Required Capabilities:**
-- Query events within a date range
-- Query events for a specific student
-- Query events for a specific subject
+- Query events within a date range, using overlap semantics so a multi day
+  event still appears on a window it straddles
+- Query events attended by a specific student
+- Order events chronologically by start time
+
+---
+
+### Event Attendee Model
+
+**Behaviors:**
+- Belongs to a calendar event (required)
+- Belongs to a student (required)
+
+**Validations:**
+
+| Field | Rules |
+|-------|-------|
+| student_id | unique per calendar_event_id |
+
+---
+
+### Time Handling
+
+All times are stored in UTC and the client renders them local: the server does
+no timezone conversion. When `all_day` is true the client still sends
+`start_time` and `end_time` as the day's bounds in UTC; the server does not
+synthesize them, and `end_time` must still be after `start_time`.
+
+Storing UTC is correct but not sufficient on its own. The teacher's `time_zone`
+tells the server how to render those instants where there is no client to ask,
+and an event's `created_time_zone` records the wall clock context its times were
+entered in. Neither changes how timestamps are stored.
+
+The UI's "All Students" toggle is a client side convenience that expands to the
+full list of student ids at submit time. The API has no all_students flag, so a
+student added later does not retroactively join past events.
 
 ---
 
@@ -797,12 +930,42 @@ Standard CRUD scoped to current teacher's subjects.
 
 **Index Filters:**
 - start_date, end_date (required)
-- student_id (optional)
-- subject_id (optional)
+- student_id (optional, matches events the student attends)
+
+**How start_date and end_date are interpreted:**
+
+A bare date names one of the teacher's local days, not a UTC day. `start_date`
+widens to local midnight and `end_date` to local 23:59:59 in
+`current_teacher.effective_time_zone`, then both convert to UTC for the query.
+Without this a one day all day event shows in two day cells and any event after
+8:00 PM Eastern leaks into the next day's results, because its stored UTC
+timestamp already falls on the following date.
+
+A value that already carries a time component is used as sent and is not
+widened. An explicit offset such as `2026-09-17T00:00:00-04:00` is honored as
+that instant rather than reinterpreted in the teacher's zone.
+
+Range matching keeps overlap semantics, so a genuine multi day event still
+appears on every local day it spans. Stored timestamps stay UTC: only the
+interpretation of the incoming bare date changes.
+
+Index returns the current teacher's events in the range ordered by start_time.
+Show, update and destroy are scoped to the current teacher and return 404 for
+another teacher's event.
+
+**Create only:**
+- `created_time_zone` is accepted on create, not on update: it records the zone
+  the event was created in and does not change afterwards
+
+**Attendees:**
+- Create and update accept `student_ids`, an array of student ids
+- On update the submitted array replaces the existing attendee set outright
+- Omitting `student_ids` on update leaves the existing set alone
 
 **Create/Update Validation:**
-- If student_id provided, verify student belongs to current teacher
-- If subject_id provided, verify subject belongs to current teacher
+- Every submitted student id must belong to the current teacher: reject the
+  whole request with a validation error if any does not, do not silently drop
+  the offending ids
 
 ---
 
@@ -816,20 +979,45 @@ Standard CRUD scoped to current teacher's subjects.
 
 **Calendar Event Model:**
 - Validates presence of title, start_time, end_time
+- title max length 255
 - end_time must be after start_time
 - Belongs to teacher
-- Optional student and subject associations
-- Date range scope filters correctly
+- Has many students through event attendees
+- Date range scope filters correctly, including events that straddle a boundary
+
+**Event Attendee Model:**
+- Belongs to a calendar event and a student
+- The (calendar_event_id, student_id) pair is unique
 
 **Subjects Controller:**
 - CRUD operations work
 - Cannot access other teacher's subjects
 
 **Calendar Events Controller:**
+- Index returns only the current teacher's events
 - Index requires date range params
-- Index filters by student and subject
-- Create validates student/subject ownership
-- Cannot access other teacher's events
+- Date range filtering works
+- Index filters by student_id
+- A bare date resolves to the teacher's local day, so an evening event whose
+  UTC timestamp falls on the next date is returned on its own local day and not
+  the next one
+- The same bare date resolves to a different UTC window for teachers in
+  different zones
+- A teacher with a null time_zone falls back to America/New_York
+- A value carrying an explicit offset is honored unchanged
+- A genuine multi day event still appears on every day it spans
+- Create with valid attendees succeeds
+- Create with a student id belonging to another teacher is rejected
+- Create with a missing title is rejected
+- end_time before start_time is rejected
+- Update replaces the attendee set
+- Destroy removes the event and its attendee rows
+- Another teacher's event is not reachable on show, update or destroy
+- Unauthenticated requests are rejected
+- Create populates `created_time_zone` from the client supplied value
+- Create falls back to the teacher's zone when the client sends none
+- An invalid event zone is rejected
+- `created_time_zone` appears in serialized output
 
 ---
 
@@ -837,12 +1025,17 @@ Standard CRUD scoped to current teacher's subjects.
 
 - [ ] Subjects migration created and run
 - [ ] Calendar events migration created and run
+- [ ] Event attendees migration created and run
 - [ ] Subject model implemented
 - [ ] Calendar event model implemented
+- [ ] Event attendee model implemented
 - [ ] Teacher associations added
-- [ ] Student association added
+- [ ] Student associations added
 - [ ] Subjects controller implemented
 - [ ] Calendar events controller implemented
+- [ ] Calendar event serializer nests attendees using the student serializer
+- [ ] created_time_zone migration created and run
+- [ ] created_time_zone populated on create and exposed in the serializer
 - [ ] Routes configured
 - [ ] All tests pass
 
@@ -1618,7 +1811,8 @@ After all phases, here are the complete associations:
 
 **Student:**
 - belongs_to teacher (Phase 2)
-- has_many calendar_events (Phase 3)
+- has_many event_attendees (Phase 3)
+- has_many calendar_events through event_attendees (Phase 3)
 - has_many assignments (Phase 4)
 - has_many report_cards (Phase 5)
 - has_many expenses (Phase 6)
@@ -1626,9 +1820,18 @@ After all phases, here are the complete associations:
 
 **Subject:**
 - belongs_to teacher (Phase 3)
-- has_many calendar_events (Phase 3)
+- has_many calendar_events (Phase 3, deferred past the first calendar slice)
 - has_many assignments (Phase 4)
 - has_many lesson_plans (Phase 7)
+
+**CalendarEvent:**
+- belongs_to teacher (Phase 3)
+- has_many event_attendees (Phase 3)
+- has_many students through event_attendees (Phase 3)
+
+**EventAttendee:**
+- belongs_to calendar_event (Phase 3)
+- belongs_to student (Phase 3)
 
 ---
 
