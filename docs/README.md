@@ -246,7 +246,7 @@ eas build --platform android
 ### Base URL
 
 **Development:** `http://localhost:3000/api/v1`  
-**Production:** `https://api.homeschoolapp.com/api/v1`
+**Production:** `https://api.myhomeschoolmaster.com/api/v1`
 
 ### Authentication
 
@@ -317,6 +317,54 @@ For complete API documentation, see [API Specification](./api-specification.md).
 ---
 
 ## Deployment
+
+### Hosts
+
+| Piece | Host |
+| --- | --- |
+| Web app | `https://www.myhomeschoolmaster.com` (the apex 308 redirects to www) |
+| API | `https://api.myhomeschoolmaster.com` |
+
+Both are served from the Vercel and Heroku deployments behind those names. The
+default `*.vercel.app` and `*.herokuapp.com` hostnames still resolve and are
+still used for preview deploys, but the custom domains are what the apps are
+configured to talk to.
+
+### Domains and auth cookies
+
+**The custom domain is load bearing. Do not move either half back onto a
+default hostname.**
+
+The API authenticates the web app with httponly `access_token` and
+`refresh_token` cookies. Whether a browser will attach those cookies depends on
+whether the API and the web app share a registrable domain:
+
+- **Before:** the web app was on `homeschool-master-web.vercel.app` and the API
+  on a `herokuapp.com` host. `vercel.app` and `herokuapp.com` are separate
+  entries on the Public Suffix List, so those are two different registrable
+  domains and every API call was cross-site. A `SameSite=Lax` cookie is not
+  sent on cross-site requests, so the workaround was `SameSite=None; Secure`,
+  which makes the cookie a third party cookie.
+- **The problem that caused:** WebKit blocks third party cookies outright, with
+  no user facing setting to allow them. Nobody on desktop Safari or on any iOS
+  browser could stay logged in, because the session cookie was simply never
+  stored or sent. This was not a bug in the auth flow: the flow was correct and
+  the cookie was being rejected by the browser.
+- **The fix:** both halves moved onto `myhomeschoolmaster.com`, the web app at
+  `www.` and the API at `api.`. They now share a registrable domain, the
+  cookies are first party, and `SameSite=Lax` attaches on every request the app
+  makes. `cookie_same_site` in `Api::V1::Auth::AuthenticationController`
+  returns `:lax` in every environment as a result.
+
+The cookies are deliberately host only: the API sets no `Domain` attribute, so
+they are scoped to `api.myhomeschoolmaster.com` and are not shared with any
+other subdomain.
+
+If the app is ever moved back to default hostnames, or the API is moved to a
+domain that is not `myhomeschoolmaster.com`, the cookie becomes third party
+again and Safari and iOS logins break again. Changing this needs a different
+auth transport (an Authorization header with a token in storage, say), not a
+`SameSite` tweak.
 
 ### Backend - Heroku (MVP)
 
@@ -390,7 +438,7 @@ AWS_BUCKET=homeschool-uploads
 
 **Mobile (.env):**
 ```bash
-EXPO_PUBLIC_API_BASE_URL=https://api.homeschoolapp.com/v1
+EXPO_PUBLIC_API_BASE_URL=https://api.myhomeschoolmaster.com/api/v1
 EXPO_PUBLIC_API_TIMEOUT=30000
 EXPO_PUBLIC_ENABLE_BIOMETRICS=true
 EXPO_PUBLIC_ENABLE_OFFLINE_MODE=true

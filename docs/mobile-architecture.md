@@ -778,7 +778,7 @@ import { LinkingOptions } from '@react-navigation/native';
 import { RootStackParamList } from '@/types/navigation';
 
 export const linking: LinkingOptions<RootStackParamList> = {
-  prefixes: ['homeschoolapp://', 'https://app.homeschoolapp.com'],
+  prefixes: ['homeschoolapp://', 'https://app.myhomeschoolmaster.com'],
   
   config: {
     screens: {

@@ -3,7 +3,7 @@
 **Version:** 1.0  
 **Date:** November 14, 2025  
 **Status:** Initial Design  
-**Base URL:** `https://api.homeschoolapp.com/v1`
+**Base URL:** `https://api.myhomeschoolmaster.com/api/v1`
 
 ---
 
@@ -62,6 +62,11 @@ The API uses JWT-based authentication with two token types:
 ### Token Storage
 - **Mobile Apps:** Store in secure platform storage (iOS Keychain, Android KeyStore)
 - **Never** store tokens in local storage or unencrypted files
+- **Web:** the API sets httponly `access_token` and `refresh_token` cookies,
+  `SameSite=Lax` and host only on `api.myhomeschoolmaster.com`. The web app is
+  served from `www.myhomeschoolmaster.com`, the same registrable domain, so
+  these are first party cookies. See "Domains and auth cookies" in the
+  [README](./README.md#domains-and-auth-cookies) before changing either host.
 
 ### Authentication Flow
 
@@ -1194,13 +1199,7 @@ resolves to `2026-09-16T15:00:00Z` through `2026-09-17T14:59:59Z`.
       "parent_event_id": null,
       "color_code": "#4CAF50",
       "reminder_minutes": 30,
-      "attendees": [
-        {
-          "student_id": "uuid-456",
-          "student_name": "Emma Johnson",
-          "attendance_status": "pending"
-        }
-      ],
+      "attendee_ids": ["uuid-456"],
       "created_at": "2025-11-01T10:00:00Z",
       "updated_at": "2025-11-01T10:00:00Z"
     }
@@ -1214,6 +1213,15 @@ resolves to `2026-09-16T15:00:00Z` through `2026-09-17T14:59:59Z`.
 ```
 
 ---
+
+> **Attendees are ids, not records.** A calendar response carries
+> `attendee_ids` only. A parent blocking subjects across several children can
+> reach hundreds of events in a month, and nesting the full student record on
+> every event repeats the same handful of students hundreds of times. Clients
+> already load the students list separately and resolve names and colours from
+> it. Note that the student index returns active students only, so an event can
+> reference a student who has since been soft deleted: clients should render
+> those as a former student rather than dropping them.
 
 ### 2. Get Single Calendar Event
 
@@ -1244,13 +1252,7 @@ Get details for a specific event.
     "parent_event_id": null,
     "color_code": "#4CAF50",
     "reminder_minutes": 30,
-    "attendees": [
-      {
-        "student_id": "uuid-456",
-        "student_name": "Emma Johnson",
-        "attendance_status": "pending"
-      }
-    ],
+    "attendee_ids": ["uuid-456"],
     "created_at": "2025-11-01T10:00:00Z",
     "updated_at": "2025-11-01T10:00:00Z"
   }
@@ -1314,12 +1316,7 @@ Create a new calendar event.
     "recurrence_end_date": "2025-12-20",
     "color_code": "#4CAF50",
     "reminder_minutes": 30,
-    "attendees": [
-      {
-        "student_id": "uuid-456",
-        "student_name": "Emma Johnson"
-      }
-    ],
+    "attendee_ids": ["uuid-456"],
     "created_at": "2025-11-14T16:00:00Z"
   }
 }
