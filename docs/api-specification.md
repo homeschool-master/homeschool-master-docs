@@ -1767,29 +1767,52 @@ Delete a file attachment from an assignment.
 
 ## Task Endpoints
 
-### 1. Get All Tasks
+Built. A task is the teacher's own to-do item: "Submit internet
+reimbursement", "Email co-op leader for winter schedule". It carries a title,
+an optional description, an optional due date and a completed state, and it
+belongs to the teacher alone. Every query is scoped to the authenticated
+teacher: another teacher's task is not found rather than forbidden.
 
-Get tasks for authenticated teacher.
+**Not built, and deliberately so:** tasks have no `student_id`, `priority`,
+`status` or `category`. An earlier version of this section described all four,
+along with pagination, six query parameters and a `student_name` field. None of
+it shipped. Tasks are not attached to students, subjects, assignments or
+calendar events.
+
+**How completion is stored:** one nullable `completed_at` timestamp. Null means
+not done. The payload carries both `completed`, the boolean a checkbox binds
+to, and `completed_at`, the instant it was ticked. There is one column behind
+the two fields, so they cannot disagree, and completing an already completed
+task does not move the timestamp.
+
+---
+
+### 1. Get All Tasks
 
 **Endpoint:** `GET /tasks`
 
 **Authentication:** Required
 
 **Query Parameters:**
-- `student_id` (optional): Filter by student (null for teacher-only tasks)
-- `status` (optional): Filter by status (pending, in_progress, completed, cancelled)
-- `priority` (optional): Filter by priority (low, medium, high)
-- `due_date_from` (optional): Tasks due after this date
-- `due_date_to` (optional): Tasks due before this date
-- `category` (optional): Filter by category
-- `sort_by` (optional): Field to sort by (default: due_date)
-- `sort_order` (optional): asc or desc (default: asc)
-- `page` (optional): Page number (default: 1)
-- `limit` (optional): Items per page (default: 20)
+- `completed` (optional): `true` or `false`. Omitted returns everything
+- `due_by` (optional): `YYYY-MM-DD`. Tasks due on or before that date,
+  inclusive. Undated tasks are excluded, since they are not due by any date
+
+Both are optional and combine. `completed=false` is the dashboard panel's
+query, `completed=false&due_by=<today>` is the overdue question, and no
+parameters at all is the full list. There is no separate overdue endpoint and
+no pagination.
+
+A value that cannot be honored is a 422 rather than a filter dropped quietly:
+a panel silently showing every task would look like it was working.
+
+**Ordering:** due date ascending with undated tasks last, then creation order
+for ties. A task with no due date is not due soon, so it sits at the end of a
+list the dashboard reads from the top.
 
 **Example Request:**
 ```http
-GET /tasks?status=pending&priority=high&sort_by=due_date
+GET /tasks?completed=false&due_by=2026-09-20
 ```
 
 **Success Response (200 OK):**
@@ -1800,37 +1823,37 @@ GET /tasks?status=pending&priority=high&sort_by=due_date
     {
       "id": "uuid-task-1",
       "teacher_id": "uuid-123",
-      "student_id": null,
-      "title": "Order new curriculum books",
-      "description": "Order math books for next semester from Amazon",
-      "due_date": "2025-11-30T23:59:59Z",
-      "priority": "high",
-      "status": "pending",
-      "completed_date": null,
-      "category": "Shopping",
-      "created_at": "2025-11-14T10:00:00Z",
-      "updated_at": "2025-11-14T10:00:00Z"
+      "title": "Export report cards",
+      "description": null,
+      "due_date": "2026-09-10",
+      "completed": false,
+      "completed_at": null,
+      "created_at": "2026-09-18T10:00:00Z"
     },
     {
       "id": "uuid-task-2",
       "teacher_id": "uuid-123",
-      "student_id": "uuid-456",
-      "student_name": "Emma Johnson",
-      "title": "Science project presentation",
-      "description": "Practice presentation for volcano project",
-      "due_date": "2025-11-18T10:00:00Z",
-      "priority": "medium",
-      "status": "in_progress",
-      "completed_date": null,
-      "category": "Projects",
-      "created_at": "2025-11-13T15:00:00Z",
-      "updated_at": "2025-11-14T09:00:00Z"
+      "title": "Email co-op leader for winter schedule",
+      "description": "Ask about the January start date",
+      "due_date": "2026-09-20",
+      "completed": false,
+      "completed_at": null,
+      "created_at": "2026-09-18T10:05:00Z"
     }
-  ],
-  "meta": {
-    "page": 1,
-    "limit": 20,
-    "total": 2
+  ]
+}
+```
+
+**Error Response (422 Unprocessable Content):**
+```json
+{
+  "success": false,
+  "error": {
+    "code": "VALIDATION_ERROR",
+    "message": "Validation failed",
+    "details": {
+      "completed": ["must be true or false"]
+    }
   }
 }
 ```
@@ -1839,29 +1862,19 @@ GET /tasks?status=pending&priority=high&sort_by=due_date
 
 ### 2. Get Single Task
 
-Get details for a specific task.
-
 **Endpoint:** `GET /tasks/{task_id}`
 
 **Authentication:** Required
 
-**Success Response (200 OK):**
+**Success Response (200 OK):** the task payload, as in Get All Tasks.
+
+**Error Response (404 Not Found):**
 ```json
 {
-  "success": true,
-  "data": {
-    "id": "uuid-task-1",
-    "teacher_id": "uuid-123",
-    "student_id": null,
-    "title": "Order new curriculum books",
-    "description": "Order math books for next semester from Amazon",
-    "due_date": "2025-11-30T23:59:59Z",
-    "priority": "high",
-    "status": "pending",
-    "completed_date": null,
-    "category": "Shopping",
-    "created_at": "2025-11-14T10:00:00Z",
-    "updated_at": "2025-11-14T10:00:00Z"
+  "success": false,
+  "error": {
+    "code": "NOT_FOUND",
+    "message": "Task not found"
   }
 }
 ```
@@ -1870,8 +1883,6 @@ Get details for a specific task.
 
 ### 3. Create Task
 
-Create a new task.
-
 **Endpoint:** `POST /tasks`
 
 **Authentication:** Required
@@ -1879,112 +1890,61 @@ Create a new task.
 **Request Body:**
 ```json
 {
-  "student_id": null,
-  "title": "Order new curriculum books",
-  "description": "Order math books for next semester from Amazon",
-  "due_date": "2025-11-30T23:59:59Z",
-  "priority": "high",
-  "category": "Shopping"
+  "title": "Submit internet reimbursement",
+  "description": "Attach the September bill",
+  "due_date": "2026-09-30"
 }
 ```
+
+**Accepted fields:** `title`, `description`, `due_date`, `completed`. Anything
+else is ignored, including `teacher_id` and `completed_at`: the task is always
+created against the authenticated teacher, and the timestamp is only ever set
+through `completed`.
 
 **Validation Rules:**
-- `title`: Required, max 255 characters
-- `student_id`: Optional, null for teacher-only task
-- `description`: Optional, text
-- `due_date`: Optional, valid ISO 8601 datetime
-- `priority`: Optional, one of: low, medium, high (default: medium)
-- `category`: Optional, max 100 characters
+- `title`: required, max 255 characters. Duplicates are allowed, unlike subjects
+- `description`: optional text. A blank string is stored as null
+- `due_date`: optional date, `YYYY-MM-DD`. A blank string clears it
+- `completed`: optional boolean, defaults to false
 
-**Success Response (201 Created):**
-```json
-{
-  "success": true,
-  "data": {
-    "id": "uuid-task-1",
-    "teacher_id": "uuid-123",
-    "student_id": null,
-    "title": "Order new curriculum books",
-    "status": "pending",
-    "priority": "high",
-    "created_at": "2025-11-14T16:00:00Z"
-  }
-}
-```
+**Success Response (201 Created):** the created task payload.
 
 ---
 
 ### 4. Update Task
 
-Update an existing task.
-
-**Endpoint:** `PUT /tasks/{task_id}`
+**Endpoint:** `PATCH /tasks/{task_id}`
 
 **Authentication:** Required
 
-**Request Body:**
+Same accepted fields as create. Ticking and unticking the checkbox are both
+plain updates:
+
 ```json
-{
-  "title": "Order new curriculum books (Updated)",
-  "status": "in_progress",
-  "priority": "medium",
-  "due_date": "2025-12-05T23:59:59Z"
-}
+{ "completed": true }
 ```
 
-**Success Response (200 OK):**
 ```json
-{
-  "success": true,
-  "data": {
-    "id": "uuid-task-1",
-    "title": "Order new curriculum books (Updated)",
-    "status": "in_progress",
-    "priority": "medium",
-    "due_date": "2025-12-05T23:59:59Z",
-    "updated_at": "2025-11-14T16:30:00Z"
-  }
-}
+{ "completed": false }
 ```
+
+There is no `/tasks/{id}/complete` member route. One endpoint handles both
+directions, which a checkbox needs, and `completed: true` on an already
+completed task leaves the original `completed_at` where it is.
+
+**Success Response (200 OK):** the full task payload.
 
 ---
 
-### 5. Mark Task Complete
-
-Mark a task as completed.
-
-**Endpoint:** `PATCH /tasks/{task_id}/complete`
-
-**Authentication:** Required
-
-**Request Body:**
-```json
-{
-  "completed_date": "2025-11-14T17:00:00Z"
-}
-```
-
-**Success Response (200 OK):**
-```json
-{
-  "success": true,
-  "data": {
-    "id": "uuid-task-1",
-    "status": "completed",
-    "completed_date": "2025-11-14T17:00:00Z"
-  }
-}
-```
-
----
-
-### 6. Delete Task
-
-Delete a task.
+### 5. Delete Task
 
 **Endpoint:** `DELETE /tasks/{task_id}`
 
 **Authentication:** Required
+
+A hard delete, unlike students and subjects: the row is removed. Nothing
+references a task, and a to-do the teacher deleted is meant to be gone rather
+than hidden.
 
 **Success Response (204 No Content)**
 

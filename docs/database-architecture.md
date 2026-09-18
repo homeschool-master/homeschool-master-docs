@@ -358,35 +358,38 @@ This document defines the database architecture for a homeschool management mobi
 
 ### 8. Tasks
 
-**Purpose:** Track to-dos for teachers and students (separate from assignments)
+**Purpose:** The teacher's own to-do list, separate from assignments
 
 | Column Name | Data Type | Constraints | Description |
 |------------|-----------|-------------|-------------|
-| id | UUID/INT | PRIMARY KEY | Unique identifier |
-| teacher_id | UUID/INT | FOREIGN KEY, NOT NULL | Reference to Teachers |
-| student_id | UUID/INT | FOREIGN KEY, NULL | Optional student assignment |
-| title | VARCHAR(255) | NOT NULL | Task title |
+| id | UUID | PRIMARY KEY | Unique identifier |
+| teacher_id | UUID | FOREIGN KEY, NOT NULL | Reference to Teachers |
+| title | VARCHAR | NOT NULL | Task title |
 | description | TEXT | NULL | Task details |
-| due_date | TIMESTAMP | NULL | Optional due date |
-| priority | ENUM | DEFAULT 'medium' | 'low', 'medium', 'high' |
-| status | ENUM | DEFAULT 'pending' | 'pending', 'in_progress', 'completed', 'cancelled' |
-| completed_date | TIMESTAMP | NULL | When task was completed |
-| category | VARCHAR(100) | NULL | Task category (e.g., "Planning", "Admin", "Shopping") |
-| created_at | TIMESTAMP | DEFAULT NOW() | Record creation date |
-| updated_at | TIMESTAMP | DEFAULT NOW() | Last update timestamp |
+| due_date | DATE | NULL | Optional due date |
+| completed_at | TIMESTAMP | NULL | When the task was completed, null while open |
+| created_at | TIMESTAMP | NOT NULL | Record creation date |
+| updated_at | TIMESTAMP | NOT NULL | Last update timestamp |
 
-**Notes:**
-- If `student_id` is NULL, task belongs to teacher only
-- If `student_id` is set, task is student-specific
+**Notes on `tasks`:**
+- Tasks belong to the teacher alone. There is no `student_id`: this table
+  previously described one, along with `priority`, `status`, `category` and a
+  `completed_date` column, none of which was built. A task is not attached to
+  a student, a subject, an assignment or a calendar event.
+- `due_date` is a DATE, not a TIMESTAMP. A to-do is due on a day rather than at
+  an instant, and a bare date keeps the whole feature out of the timezone
+  question that calendar events have to answer.
+- Completion is the single `completed_at` timestamp rather than a boolean, so
+  the record carries when as well as whether. The API exposes a derived
+  `completed` boolean over it for clients binding a checkbox.
+- Deletion is a hard delete, unlike Students and Subjects: nothing references a
+  task, so there is nothing for a soft delete to protect.
 
 **Indexes:**
 - PRIMARY KEY on `id`
-- FOREIGN KEY on `teacher_id` REFERENCES Teachers(id) ON DELETE CASCADE
-- FOREIGN KEY on `student_id` REFERENCES Students(id) ON DELETE CASCADE
-- INDEX on `teacher_id`
-- INDEX on `student_id`
-- INDEX on `status`
-- INDEX on `due_date`
+- FOREIGN KEY on `teacher_id` REFERENCES Teachers(id)
+- INDEX on `(teacher_id, due_date)`
+- INDEX on `completed_at`
 
 ---
 

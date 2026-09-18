@@ -1116,7 +1116,7 @@ None—all required gems already installed.
 
 ---
 
-**Tasks Table:**
+**Tasks Table:** built as follows.
 
 | Column | Type | Constraints |
 |--------|------|-------------|
@@ -1125,20 +1125,29 @@ None—all required gems already installed.
 | title | string | Not null |
 | description | text | Nullable |
 | due_date | date | Nullable |
-| priority | string | Default: 'medium' |
-| status | string | Default: 'pending' |
 | completed_at | datetime | Nullable |
 | created_at | datetime | Not null |
 | updated_at | datetime | Not null |
 
 **Indexes:**
-- teacher_id
-- due_date
-- status
-- priority
+- [teacher_id, due_date]
+- completed_at
 
-**Priority values:** low, medium, high
-**Status values:** pending, completed
+**No `priority` and no `status`.** This section first specified both, and the
+Tasks table in database-architecture.md went further with `student_id`,
+`category`, a four value status and a `completed_date` column of a different
+name. None of that was built. A task is a teacher's own to-do item with a
+title, an optional description, an optional due date and a checkbox, which is
+what the dashboard's Tasks Due panel consumes. Adding priority or a status
+enum later is a migration, not a rewrite.
+
+**Completion is one nullable timestamp, not a boolean.** `completed_at` null
+means not done. The timestamp answers "is it done" as well as a flag would and
+also answers when, which a flag throws away, and it matches how the rest of
+the app records events: `email_verified_at`, `graded_at`, `revoked_at`. A
+separate flag alongside it could drift out of step with it, so there is only
+the one column. The model exposes `completed` and `completed=` over the top of
+it, so clients bind a checkbox to a boolean and never see the null.
 
 ---
 
@@ -1182,22 +1191,26 @@ None—all required gems already installed.
 **Behaviors:**
 - Belongs to a teacher
 - Destroyed when teacher deleted
+- Not linked to students, subjects, assignments or calendar events
 
 **Validations:**
 
 | Field | Rules |
 |-------|-------|
-| title | presence, max length 255 |
-| priority | inclusion in valid values |
-| status | inclusion in valid values |
+| title | presence, max length 255. Duplicates allowed, unlike subjects |
+| description | optional, blank stored as null |
+| due_date | optional date |
 
 **Required Capabilities:**
-- Query by status
-- Query by priority
-- Query by due date range
-- Query overdue tasks (past due and pending)
-- Check if task is overdue
-- Complete a task (set status and timestamp)
+- Query open tasks and completed tasks
+- Query tasks due on or before a date, excluding undated ones
+- Order by due date, undated last, creation order for ties
+- Complete and un-complete a task, keeping the original time on a repeat
+
+Overdue is not a server side concept. It would need the server to decide what
+"today" is in the teacher's zone, and the client already knows both the due
+date and the zone. `completed=false` with `due_by` set to the client's today is
+the overdue query, so nothing extra is needed for it.
 
 ---
 
@@ -1211,7 +1224,10 @@ Add to api/v1 namespace:
 
 **Tasks:**
 - resources :tasks (full CRUD)
-- PATCH /tasks/:id/complete (member route)
+
+No `/tasks/:id/complete` member route was built. `completed` is an accepted
+update field, so one PATCH ticks and unticks: a member route would have needed
+an uncomplete sibling to do the same job.
 
 ---
 
@@ -1222,7 +1238,12 @@ Add to api/v1 namespace:
 - Validate student/subject ownership
 
 **Tasks Controller:** `app/controllers/api/v1/tasks_controller.rb`
-- Standard CRUD plus complete action
+- Standard CRUD, following the students and subjects controllers: top level
+  strong params, every query scoped through current_teacher
+- Index takes optional `completed` and `due_by` filters. A value that cannot be
+  parsed is a 422 rather than a filter silently dropped
+- Destroy is a hard delete, unlike students and subjects: nothing references a
+  task
 
 ---
 
@@ -1252,12 +1273,12 @@ Add to api/v1 namespace:
 ### Validation Checklist
 
 - [ ] Assignments migration created and run
-- [ ] Tasks migration created and run
+- [x] Tasks migration created and run
 - [ ] Assignment model implemented
-- [ ] Task model implemented
+- [x] Task model implemented, with serializer and routes
 - [ ] Associations added to Teacher, Student, Subject
 - [ ] Assignments controller with grade action
-- [ ] Tasks controller with complete action
+- [x] Tasks controller implemented, completion through update rather than a member action
 - [ ] Routes configured
 - [ ] All tests pass
 
