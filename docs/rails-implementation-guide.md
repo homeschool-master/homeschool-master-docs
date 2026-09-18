@@ -322,6 +322,7 @@ callers keep using the effective reader.
 | email | presence, uniqueness (case insensitive), valid format |
 | password | minimum 8 characters (on create or when present) |
 | phone | max length 20 (optional) |
+| time_zone | recognized IANA identifier when present (optional, Phase 3) |
 
 **Required Capabilities:**
 - Query active teachers only
@@ -406,7 +407,7 @@ Add to api/v1 namespace under auth namespace:
 
 | Endpoint | Request | Success | Errors |
 |----------|---------|---------|--------|
-| register | first_name, last_name, email, password, time_zone (optional) | 201, teacher data (no password_digest) | 422 validation errors |
+| register | first_name, last_name, email, password, time_zone (optional, Phase 3) | 201, teacher data (no password_digest) | 422 validation errors |
 | login | email, password | 200, access_token + refresh_token | 401 invalid credentials, 401 inactive |
 | refresh | refresh_token | 200, new access_token | 401 invalid/expired/revoked |
 | logout | refresh_token | 204 | 401 invalid token |
@@ -541,6 +542,11 @@ Add to api/v1 namespace under auth namespace:
 - [ ] Passwords controller endpoints working
 - [ ] Email verification controller endpoints working
 - [ ] All tests pass
+
+Not part of this phase: `teachers.time_zone`, the preferences endpoint and the
+serializer's two timezone fields. They are documented with the teachers table
+above because that is where the table is defined, but they arrived with the
+Phase 3 calendar work and are checked off there.
 
 ---
 
@@ -1034,6 +1040,10 @@ another teacher's event.
 - [ ] Subjects controller implemented
 - [ ] Calendar events controller implemented
 - [ ] Calendar event serializer nests attendees using the student serializer
+- [ ] teachers.time_zone migration created and run
+- [ ] Teacher time_zone validation, effective_time_zone fallback reader and both
+      serializer fields implemented
+- [ ] Preferences endpoint accepting time_zone without a password gate
 - [ ] created_time_zone migration created and run
 - [ ] created_time_zone populated on create and exposed in the serializer
 - [ ] Routes configured
