@@ -734,7 +734,13 @@ None—all required gems already installed.
 
 **Indexes:**
 - teacher_id
-- [teacher_id, name] (unique)
+- is_active
+- [teacher_id, lower(name)] unique, partial on `WHERE is_active`
+
+The unique index is case insensitive and partial, which is narrower than the
+plain [teacher_id, name] this section first specified. Removal here is a soft
+delete, so a plain unique index would let a removed "Math" block a new one
+forever: the partial index keeps the old row and frees the name.
 
 ---
 
@@ -828,15 +834,21 @@ and tables are planned but deliberately absent until a later slice:
 
 **Behaviors:**
 - Belongs to a teacher
-- Has many calendar events (set null when subject deleted)
 - Destroyed when teacher deleted
+- Not yet linked to calendar events: `calendar_events` has no `subject_id`
+  column, and adding one was deliberately left out of the subjects build
 
 **Validations:**
 
 | Field | Rules |
 |-------|-------|
-| name | presence, max length 100, unique per teacher |
-| color | valid hex format (optional) |
+| name | presence, max length 100, unique per teacher, case insensitive, among active subjects only |
+| color | max length 20 (optional) |
+| description | optional, blank stored as null |
+
+`color` is length checked rather than hex format checked, matching the student
+model. Adding format validation to one and not the other would be the
+inconsistency, not the fix.
 
 **Required Capabilities:**
 - Query active subjects only
@@ -916,7 +928,9 @@ Add to api/v1 namespace:
 
 **Location:** `app/controllers/api/v1/subjects_controller.rb`
 
-Standard CRUD scoped to current teacher's subjects.
+Standard CRUD scoped to current teacher's subjects, following the students
+controller: top level strong params, soft delete on destroy, index returning
+active subjects only, ordered by name.
 
 ---
 
@@ -1032,12 +1046,13 @@ another teacher's event.
 - [ ] Subjects migration created and run
 - [ ] Calendar events migration created and run
 - [ ] Event attendees migration created and run
-- [ ] Subject model implemented
+- [x] Subjects migration created and run
+- [x] Subject model implemented
 - [ ] Calendar event model implemented
 - [ ] Event attendee model implemented
 - [ ] Teacher associations added
 - [ ] Student associations added
-- [ ] Subjects controller implemented
+- [x] Subjects controller implemented, with serializer and routes
 - [ ] Calendar events controller implemented
 - [ ] Calendar event serializer nests attendees using the student serializer
 - [ ] teachers.time_zone migration created and run
@@ -1432,7 +1447,13 @@ None—all required gems already installed.
 
 **Indexes:**
 - teacher_id
-- [teacher_id, name] (unique)
+- is_active
+- [teacher_id, lower(name)] unique, partial on `WHERE is_active`
+
+The unique index is case insensitive and partial, which is narrower than the
+plain [teacher_id, name] this section first specified. Removal here is a soft
+delete, so a plain unique index would let a removed "Math" block a new one
+forever: the partial index keeps the old row and frees the name.
 
 ---
 

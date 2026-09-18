@@ -2660,13 +2660,29 @@ Create a custom expense category.
 
 ## Subject Endpoints
 
+Built. Subjects belong to a teacher and carry a name, an optional colour and
+description, and an active flag. Every query is scoped to the authenticated
+teacher: another teacher's subject is not found rather than forbidden.
+
+**Name uniqueness:** a name is unique per teacher and compared case
+insensitively, so one teacher cannot hold both "Math" and "math". Two different
+teachers may each have a subject called Math. A removed subject releases its
+name, so the same name can be used again afterwards. The rule is enforced by a
+model validation and by a matching partial unique index on
+`(teacher_id, lower(name)) WHERE is_active`.
+
+---
+
 ### 1. Get All Subjects
 
-Get all subjects for authenticated teacher.
+Get the authenticated teacher's active subjects, ordered by name.
 
 **Endpoint:** `GET /subjects`
 
 **Authentication:** Required
+
+Removed subjects are excluded. There are no query parameters: filtering and
+sorting are not implemented for this collection.
 
 **Success Response (200 OK):**
 ```json
@@ -2677,21 +2693,19 @@ Get all subjects for authenticated teacher.
       "id": "uuid-subject-1",
       "teacher_id": "uuid-123",
       "name": "Mathematics",
-      "description": "Arithmetic, algebra, geometry, and problem solving",
-      "color_code": "#4CAF50",
-      "icon": "calculator",
-      "created_at": "2025-01-15T10:00:00Z",
-      "updated_at": "2025-01-15T10:00:00Z"
+      "color": "#d97b0a",
+      "description": "Arithmetic, algebra, geometry and problem solving",
+      "is_active": true,
+      "created_at": "2026-09-18T10:00:00Z"
     },
     {
       "id": "uuid-subject-2",
       "teacher_id": "uuid-123",
       "name": "Science",
-      "description": "Biology, chemistry, physics, and scientific method",
-      "color_code": "#2196F3",
-      "icon": "flask",
-      "created_at": "2025-01-15T10:00:00Z",
-      "updated_at": "2025-01-15T10:00:00Z"
+      "color": "#16a34a",
+      "description": null,
+      "is_active": true,
+      "created_at": "2026-09-18T10:05:00Z"
     }
   ]
 }
@@ -2701,11 +2715,12 @@ Get all subjects for authenticated teacher.
 
 ### 2. Get Single Subject
 
-Get details for a specific subject.
-
 **Endpoint:** `GET /subjects/{subject_id}`
 
 **Authentication:** Required
+
+A removed subject is still readable by id, which matches students: only the
+collection hides them.
 
 **Success Response (200 OK):**
 ```json
@@ -2715,11 +2730,21 @@ Get details for a specific subject.
     "id": "uuid-subject-1",
     "teacher_id": "uuid-123",
     "name": "Mathematics",
-    "description": "Arithmetic, algebra, geometry, and problem solving",
-    "color_code": "#4CAF50",
-    "icon": "calculator",
-    "created_at": "2025-01-15T10:00:00Z",
-    "updated_at": "2025-01-15T10:00:00Z"
+    "color": "#d97b0a",
+    "description": "Arithmetic, algebra, geometry and problem solving",
+    "is_active": true,
+    "created_at": "2026-09-18T10:00:00Z"
+  }
+}
+```
+
+**Error Response (404 Not Found):**
+```json
+{
+  "success": false,
+  "error": {
+    "code": "NOT_FOUND",
+    "message": "Subject not found"
   }
 }
 ```
@@ -2727,8 +2752,6 @@ Get details for a specific subject.
 ---
 
 ### 3. Create Subject
-
-Create a new subject.
 
 **Endpoint:** `POST /subjects`
 
@@ -2738,17 +2761,19 @@ Create a new subject.
 ```json
 {
   "name": "Mathematics",
-  "description": "Arithmetic, algebra, geometry, and problem solving",
-  "color_code": "#4CAF50",
-  "icon": "calculator"
+  "color": "#d97b0a",
+  "description": "Arithmetic, algebra, geometry and problem solving"
 }
 ```
 
+**Accepted fields:** `name`, `color`, `description`. Anything else is ignored,
+including `teacher_id` and `is_active`: the subject is always created against
+the authenticated teacher and always active.
+
 **Validation Rules:**
-- `name`: Required, max 100 characters
-- `description`: Optional, text
-- `color_code`: Optional, valid hex color
-- `icon`: Optional, max 50 characters
+- `name`: required, max 100 characters, unique per teacher, case insensitive
+- `color`: optional, max 20 characters. Not format checked, matching students
+- `description`: optional text. A blank string is stored as null
 
 **Success Response (201 Created):**
 ```json
@@ -2758,10 +2783,24 @@ Create a new subject.
     "id": "uuid-subject-1",
     "teacher_id": "uuid-123",
     "name": "Mathematics",
-    "description": "Arithmetic, algebra, geometry, and problem solving",
-    "color_code": "#4CAF50",
-    "icon": "calculator",
-    "created_at": "2025-11-14T16:00:00Z"
+    "color": "#d97b0a",
+    "description": "Arithmetic, algebra, geometry and problem solving",
+    "is_active": true,
+    "created_at": "2026-09-18T16:00:00Z"
+  }
+}
+```
+
+**Error Response (422 Unprocessable Content):**
+```json
+{
+  "success": false,
+  "error": {
+    "code": "VALIDATION_ERROR",
+    "message": "Validation failed",
+    "details": {
+      "name": ["has already been taken"]
+    }
   }
 }
 ```
@@ -2770,48 +2809,40 @@ Create a new subject.
 
 ### 4. Update Subject
 
-Update an existing subject.
-
-**Endpoint:** `PUT /subjects/{subject_id}`
+**Endpoint:** `PATCH /subjects/{subject_id}`
 
 **Authentication:** Required
+
+Same accepted fields as create. `is_active` is not among them, so this endpoint
+cannot be used to restore a removed subject.
 
 **Request Body:**
 ```json
 {
   "name": "Advanced Mathematics",
-  "description": "Algebra, geometry, trigonometry, and calculus",
-  "color_code": "#1B5E20"
+  "color": "#7c3aed"
 }
 ```
 
-**Success Response (200 OK):**
-```json
-{
-  "success": true,
-  "data": {
-    "id": "uuid-subject-1",
-    "name": "Advanced Mathematics",
-    "description": "Algebra, geometry, trigonometry, and calculus",
-    "color_code": "#1B5E20",
-    "updated_at": "2025-11-14T16:30:00Z"
-  }
-}
-```
+**Success Response (200 OK):** the full subject payload, as in Get Single
+Subject.
+
+**Error Response (422 Unprocessable Content):** same shape as create, including
+a rename onto a name the teacher already uses.
 
 ---
 
 ### 5. Delete Subject
 
-Delete a subject.
-
 **Endpoint:** `DELETE /subjects/{subject_id}`
 
 **Authentication:** Required
 
-**Success Response (204 No Content)**
+Soft delete: `is_active` is flipped to false and the row survives, matching
+students. The subject leaves the index, stays readable by id, and releases its
+name for reuse.
 
-**Note:** This will set subject_id to NULL in related records (assignments, expenses, etc.)
+**Success Response (204 No Content)**
 
 ---
 

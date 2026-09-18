@@ -286,21 +286,36 @@ This document defines the database architecture for a homeschool management mobi
 
 | Column Name | Data Type | Constraints | Description |
 |------------|-----------|-------------|-------------|
-| id | UUID/INT | PRIMARY KEY | Unique identifier |
-| teacher_id | UUID/INT | FOREIGN KEY, NOT NULL | Reference to Teachers |
-| name | VARCHAR(100) | NOT NULL | Subject name |
+| id | UUID | PRIMARY KEY | Unique identifier |
+| teacher_id | UUID | FOREIGN KEY, NOT NULL | Reference to Teachers |
+| name | VARCHAR | NOT NULL | Subject name |
+| color | VARCHAR | NULL | Display colour, for example "#d97b0a" |
 | description | TEXT | NULL | Subject description |
-| color_code | VARCHAR(7) | NULL | Hex color for UI display |
-| icon | VARCHAR(50) | NULL | Icon identifier |
-| created_at | TIMESTAMP | DEFAULT NOW() | Record creation date |
-| updated_at | TIMESTAMP | DEFAULT NOW() | Last update timestamp |
+| is_active | BOOLEAN | NOT NULL DEFAULT TRUE | False once removed |
+| created_at | TIMESTAMP | NOT NULL | Record creation date |
+| updated_at | TIMESTAMP | NOT NULL | Last update timestamp |
 
 **Examples:** "Mathematics", "Language Arts", "Science", "History", "Art", "Physical Education"
 
 **Indexes:**
 - PRIMARY KEY on `id`
-- FOREIGN KEY on `teacher_id` REFERENCES Teachers(id) ON DELETE CASCADE
+- FOREIGN KEY on `teacher_id` REFERENCES Teachers(id)
 - INDEX on `teacher_id`
+- INDEX on `is_active`
+- UNIQUE INDEX on `(teacher_id, lower(name))` WHERE `is_active`
+
+**Notes on `subjects`:**
+- The built table uses `color` and carries `is_active`. It has no `icon` column:
+  this table previously listed `color_code VARCHAR(7)` and `icon VARCHAR(50)`,
+  neither of which was built. `color` follows the students table, where the
+  column is a plain string rather than a checked hex value.
+- Removal is a soft delete, the same as students: `is_active` goes false and the
+  row stays. The unique index is partial on `is_active` so a removed subject
+  releases its name, and case insensitive so one teacher cannot hold both
+  "Math" and "math".
+- Nothing references `subjects` yet. `Calendar_Events` has no `subject_id`
+  column, so the cascade and set null behaviour described elsewhere for
+  subject deletion does not apply today.
 
 ---
 
