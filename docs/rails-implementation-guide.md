@@ -1082,37 +1082,62 @@ None—all required gems already installed.
 
 ### Database Schema
 
-**Assignments Table:**
+**Assignments Table:** built as follows.
 
 | Column | Type | Constraints |
 |--------|------|-------------|
 | id | uuid | Primary key |
 | teacher_id | uuid | Foreign key, not null |
-| student_id | uuid | Foreign key, not null |
-| subject_id | uuid | Foreign key, nullable |
+| subject_id | uuid | Foreign key, **not null** |
 | title | string | Not null |
 | description | text | Nullable |
 | due_date | date | Nullable |
-| status | string | Default: 'pending' |
-| grade | string | Nullable |
-| max_grade | string | Nullable |
-| graded_at | datetime | Nullable |
+| points_possible | decimal(10,2) | Not null, default 100, greater than zero |
+| weight | decimal(10,2) | Not null, default 1, zero or greater |
 | created_at | datetime | Not null |
 | updated_at | datetime | Not null |
 
 **Indexes:**
 - teacher_id
-- student_id
 - subject_id
-- due_date
-- status
+- [teacher_id, due_date]
 
-**Status values:** pending, in_progress, completed, graded
+**Assignment_Grades Table:** one row per student per assignment.
 
-**Foreign Keys:**
-- teacher_id references teachers(id)
-- student_id references students(id) with ON DELETE CASCADE
-- subject_id references subjects(id) with ON DELETE SET NULL
+| Column | Type | Constraints |
+|--------|------|-------------|
+| id | uuid | Primary key |
+| assignment_id | uuid | Foreign key, not null, ON DELETE CASCADE |
+| student_id | uuid | Foreign key, not null, ON DELETE CASCADE |
+| points_earned | decimal(10,2) | Nullable: null is unmarked, not zero |
+| notes | text | Nullable |
+| graded_at | datetime | Nullable, set by the server |
+| created_at | datetime | Not null |
+| updated_at | datetime | Not null |
+
+**Indexes:**
+- [assignment_id, student_id] unique
+- student_id
+
+**No `student_id` on the assignment.** This section first specified one, and so
+did the Assignments table in database-architecture.md, which added
+`calendar_event_id`, `completion_status`, `completed_date`, `assigned_date`,
+`attachments`, and `grade` / `points_earned` / `points_possible` columns on the
+assignment itself. Those cannot be right together: an assignment given to three
+students cannot carry one score. The students come through their grades, the
+way calendar event attendees come through event_attendees, except that this
+join row carries the score as its payload.
+
+**Scoring is points earned against points possible.** Not a letter and not a
+percentage. Both of those derive from points and neither converts back, so
+storing them would discard what the teacher entered. Letters are computed on
+read from a fixed 90/80/70/60 scale.
+
+**Weight lives on the assignment.** One decimal, default 1. A category based
+scheme, where the weight sits on a category and the assignment names one, is
+the obvious alternative and the obvious later addition: it needs a category
+column and a per subject weights table, and it does not change how scores are
+stored.
 
 ---
 
@@ -1164,25 +1189,35 @@ it, so clients bind a checkbox to a boolean and never see the null.
 ### Assignment Model
 
 **Behaviors:**
-- Belongs to a teacher (required)
-- Belongs to a student (required)
-- Belongs to a subject (optional)
-- Destroyed when student deleted
+- Belongs to a teacher and to a subject, both required
+- Has many assignment grades, and students through them
+- Destroyed with its teacher, and with its subject
 
 **Validations:**
 
 | Field | Rules |
 |-------|-------|
 | title | presence, max length 255 |
-| status | inclusion in valid values |
+| points_possible | greater than zero |
+| weight | zero or greater |
+| subject_id | must belong to the current teacher |
+
+### Assignment Grade Model
+
+**Validations:**
+
+| Field | Rules |
+|-------|-------|
+| points_earned | zero or greater, nullable. No upper bound: above points_possible is extra credit |
+| student_id | unique per assignment, and must belong to the assignment's teacher |
+
+`graded_at` follows `points_earned`: stamped when a score is first entered,
+cleared when the score is removed, and not moved by a later correction. Same
+shape as the task's `completed_at`.
 
 **Required Capabilities:**
-- Query by status
-- Query by due date range
-- Query by student
-- Query overdue assignments (past due and not completed/graded)
-- Check if assignment is overdue
-- Grade an assignment (set grade, max_grade, graded_at, status)
+- Query by subject and by due date range
+- Roll up a student's marked work by subject over a period, weighted
 
 ---
 
@@ -1220,7 +1255,10 @@ Add to api/v1 namespace:
 
 **Assignments:**
 - resources :assignments (full CRUD)
-- PATCH /assignments/:id/grade (member route)
+- Nested: resources :grades, only: [:index, :update]
+
+No `/assignments/:id/grade` member route. A single assignment has a score per
+student, so there is nothing for one member action to grade.
 
 **Tasks:**
 - resources :tasks (full CRUD)
@@ -1234,8 +1272,17 @@ an uncomplete sibling to do the same job.
 ### Controllers
 
 **Assignments Controller:** `app/controllers/api/v1/assignments_controller.rb`
-- Standard CRUD plus grade action
-- Validate student/subject ownership
+- Standard CRUD, every query scoped through current_teacher
+- `student_ids` assigns the work, replacing the set on update. Students who
+  stay keep their scores; a student removed loses their grade row
+- Subject and student ownership checked before anything is written
+
+**Assignment Grades Controller:** `app/controllers/api/v1/assignment_grades_controller.rb`
+- Scores only: `points_earned` and `notes`
+
+**Progress Controller:** `app/controllers/api/v1/progress_controller.rb`
+- `GET /students/:student_id/progress?from=&to=`, both dates required
+- Delegates to `ProgressReport`, in `app/services`
 
 **Tasks Controller:** `app/controllers/api/v1/tasks_controller.rb`
 - Standard CRUD, following the students and subjects controllers: top level
@@ -1272,12 +1319,12 @@ an uncomplete sibling to do the same job.
 
 ### Validation Checklist
 
-- [ ] Assignments migration created and run
+- [x] Assignments and assignment_grades migrations created and run
 - [x] Tasks migration created and run
-- [ ] Assignment model implemented
+- [x] Assignment and assignment grade models implemented
 - [x] Task model implemented, with serializer and routes
 - [ ] Associations added to Teacher, Student, Subject
-- [ ] Assignments controller with grade action
+- [x] Assignments, grades and progress controllers implemented
 - [x] Tasks controller implemented, completion through update rather than a member action
 - [ ] Routes configured
 - [ ] All tests pass
@@ -1285,6 +1332,20 @@ an uncomplete sibling to do the same job.
 ---
 
 ## Phase 5: Report Cards
+
+**Not built.** This phase is the next slice. The weighted calculation it needs
+already exists as `ProgressReport`, reachable at
+`GET /students/:student_id/progress?from=&to=`, so what is left is storage and
+workflow over it rather than arithmetic.
+
+Two things in the sections below contradict what shipped and should be settled
+before building them. The grade entry is specified as a hand typed `grade`
+string per subject, which would sit alongside a calculated figure with nothing
+keeping the two in step: a report card entry should carry the computed
+percentage and letter, captured at issue. And the column names differ from
+database-architecture.md, which calls the same fields `start_date`, `end_date`
+and `published_at` and adds `period_type`, `grading_system` and a three value
+status. Pick one set before writing the migration.
 
 ### Goal
 

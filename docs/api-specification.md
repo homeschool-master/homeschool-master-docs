@@ -1478,29 +1478,47 @@ Create a custom event type.
 
 ## Assignment Endpoints
 
-### 1. Get All Assignments
+Built. An assignment is a piece of work in a subject, given to one or more
+students, with its own due date. It does not create a calendar event and does
+not touch `calendar_events`.
 
-Get assignments for authenticated teacher.
+**Not built, and deliberately so:** there is no `student_id` on the assignment,
+no `calendar_event_id`, no `completion_status`, no `assigned_date`, no
+`attachments`, and no `grade` or `points_earned` column on the assignment
+itself. Earlier versions of this section and of the database architecture doc
+described all of those. They cannot all be right: an assignment given to three
+students cannot carry one score, which is the whole point of grading per
+student.
+
+**How the two tables relate.** One row in `assignment_grades` per student per
+assignment. The row existing means the student has the work. `points_earned`
+null means it has not been marked yet. There is no separate join table: the
+grade row is the assignment of the work and the score for it.
+
+**How a score is stored.** Points earned against points possible, both
+decimals. `points_possible` lives on the assignment, because it is a property
+of the work; `points_earned` lives on the grade, because it is per student.
+Percentages and letters are derived on read and never stored: a percentage
+cannot be turned back into points, and a letter cannot be turned back into
+either, so storing those would throw away what the teacher entered. A family
+that grades out of 100 sets `points_possible` to 100 and enters the
+percentage; one that grades pass or fail sets it to 1 and enters 1 or 0.
+
+---
+
+### 1. Get All Assignments
 
 **Endpoint:** `GET /assignments`
 
 **Authentication:** Required
 
 **Query Parameters:**
-- `student_id` (optional): Filter by student
-- `subject_id` (optional): Filter by subject
-- `completion_status` (optional): Filter by status (not_started, in_progress, completed, overdue)
-- `due_date_from` (optional): Assignments due after this date
-- `due_date_to` (optional): Assignments due before this date
-- `sort_by` (optional): Field to sort by (default: due_date)
-- `sort_order` (optional): asc or desc (default: asc)
-- `page` (optional): Page number (default: 1)
-- `limit` (optional): Items per page (default: 20)
+- `subject_id` (optional): only that subject's work
+- `due_from`, `due_to` (optional): `YYYY-MM-DD`, inclusive at both ends
 
-**Example Request:**
-```http
-GET /assignments?student_id=uuid-456&completion_status=incomplete&sort_by=due_date
-```
+An unparseable date is a 422 rather than a filter dropped quietly.
+
+**Ordering:** due date ascending, undated last, then creation order.
 
 **Success Response (200 OK):**
 ```json
@@ -1508,87 +1526,59 @@ GET /assignments?student_id=uuid-456&completion_status=incomplete&sort_by=due_da
   "success": true,
   "data": [
     {
-      "id": "uuid-assign-1",
-      "student_id": "uuid-456",
-      "student_name": "Emma Johnson",
+      "id": "uuid-assignment-1",
       "teacher_id": "uuid-123",
-      "subject_id": "uuid-subject-1",
-      "subject_name": "Mathematics",
-      "calendar_event_id": "uuid-event-1",
-      "title": "Fractions Worksheet #1",
-      "description": "Complete pages 15-18 in the workbook",
-      "due_date": "2025-11-20T23:59:59Z",
-      "assigned_date": "2025-11-14",
-      "completion_status": "not_started",
-      "completed_date": null,
-      "grade": null,
-      "points_earned": null,
-      "points_possible": 100,
-      "notes": null,
-      "attachments": [
+      "subject_id": "uuid-subject-math",
+      "title": "Chapter 4 problems",
+      "description": "Odd numbered questions only",
+      "due_date": "2026-09-20",
+      "points_possible": "20.0",
+      "weight": "1.0",
+      "grades": [
         {
-          "name": "worksheet.pdf",
-          "url": "https://storage.example.com/assignments/worksheet.pdf",
-          "type": "pdf",
-          "size": 245678
+          "id": "uuid-grade-1",
+          "assignment_id": "uuid-assignment-1",
+          "student_id": "uuid-student-eliza",
+          "points_earned": "18.0",
+          "percentage": "90.0",
+          "graded": true,
+          "graded_at": "2026-09-21T14:02:00Z",
+          "notes": null
+        },
+        {
+          "id": "uuid-grade-2",
+          "assignment_id": "uuid-assignment-1",
+          "student_id": "uuid-student-samuel",
+          "points_earned": null,
+          "percentage": null,
+          "graded": false,
+          "graded_at": null,
+          "notes": null
         }
       ],
-      "created_at": "2025-11-14T10:00:00Z",
-      "updated_at": "2025-11-14T10:00:00Z"
+      "created_at": "2026-09-18T10:00:00Z"
     }
-  ],
-  "meta": {
-    "page": 1,
-    "limit": 20,
-    "total": 1
-  }
+  ]
 }
 ```
+
+Grades are nested rather than reduced to ids, unlike calendar event attendees.
+There the ids kept a month of several hundred events small; here the grades are
+the substance of the record and a family has a handful of students.
 
 ---
 
 ### 2. Get Single Assignment
 
-Get details for a specific assignment.
-
 **Endpoint:** `GET /assignments/{assignment_id}`
 
 **Authentication:** Required
 
-**Success Response (200 OK):**
-```json
-{
-  "success": true,
-  "data": {
-    "id": "uuid-assign-1",
-    "student_id": "uuid-456",
-    "student_name": "Emma Johnson",
-    "teacher_id": "uuid-123",
-    "subject_id": "uuid-subject-1",
-    "subject_name": "Mathematics",
-    "calendar_event_id": "uuid-event-1",
-    "title": "Fractions Worksheet #1",
-    "description": "Complete pages 15-18 in the workbook",
-    "due_date": "2025-11-20T23:59:59Z",
-    "assigned_date": "2025-11-14",
-    "completion_status": "not_started",
-    "completed_date": null,
-    "grade": null,
-    "points_earned": null,
-    "points_possible": 100,
-    "notes": null,
-    "attachments": [],
-    "created_at": "2025-11-14T10:00:00Z",
-    "updated_at": "2025-11-14T10:00:00Z"
-  }
-}
-```
+Same payload as a row of the index. 404 for another teacher's assignment.
 
 ---
 
 ### 3. Create Assignment
-
-Create a new assignment.
 
 **Endpoint:** `POST /assignments`
 
@@ -1597,171 +1587,177 @@ Create a new assignment.
 **Request Body:**
 ```json
 {
-  "student_id": "uuid-456",
-  "subject_id": "uuid-subject-1",
-  "calendar_event_id": "uuid-event-1",
-  "title": "Fractions Worksheet #1",
-  "description": "Complete pages 15-18 in the workbook",
-  "due_date": "2025-11-20T23:59:59Z",
-  "assigned_date": "2025-11-14",
-  "points_possible": 100,
-  "notes": "Focus on proper notation"
+  "subject_id": "uuid-subject-math",
+  "title": "Chapter 4 problems",
+  "description": "Odd numbered questions only",
+  "due_date": "2026-09-20",
+  "points_possible": 20,
+  "weight": 1,
+  "student_ids": ["uuid-student-eliza", "uuid-student-samuel"]
 }
 ```
+
+**Accepted fields:** `subject_id`, `title`, `description`, `due_date`,
+`points_possible`, `weight`, `student_ids`. `teacher_id` is ignored.
 
 **Validation Rules:**
-- `student_id`: Required, valid student ID
-- `title`: Required, max 255 characters
-- `subject_id`: Optional, valid subject ID
-- `calendar_event_id`: Optional, valid event ID
-- `due_date`: Optional, valid ISO 8601 datetime
-- `assigned_date`: Required, valid date (YYYY-MM-DD)
-- `points_possible`: Optional, positive decimal
+- `subject_id`: required, must be one of the teacher's own subjects
+- `title`: required, max 255 characters
+- `points_possible`: required, greater than zero. Defaults to 100
+- `weight`: required, zero or greater. Defaults to 1
+- `due_date`: optional date. Work with no due date appears in no report period
+- `student_ids`: optional. Every id must be one of the teacher's own students,
+  and a list containing one that is not rejects the whole request and creates
+  nothing
 
-**Success Response (201 Created):**
-```json
-{
-  "success": true,
-  "data": {
-    "id": "uuid-assign-1",
-    "student_id": "uuid-456",
-    "teacher_id": "uuid-123",
-    "subject_id": "uuid-subject-1",
-    "title": "Fractions Worksheet #1",
-    "completion_status": "not_started",
-    "created_at": "2025-11-14T16:00:00Z"
-  }
-}
-```
+Each id in `student_ids` becomes an unmarked grade row.
 
 ---
 
 ### 4. Update Assignment
 
-Update an existing assignment.
-
-**Endpoint:** `PUT /assignments/{assignment_id}`
+**Endpoint:** `PATCH /assignments/{assignment_id}`
 
 **Authentication:** Required
 
-**Request Body:**
-```json
-{
-  "title": "Fractions Worksheet #1 (Revised)",
-  "due_date": "2025-11-22T23:59:59Z",
-  "completion_status": "in_progress",
-  "grade": "A-",
-  "points_earned": 92.5,
-  "notes": "Great work on problems 1-10"
-}
-```
+Same fields as create. A submitted `student_ids` array replaces the assigned
+set: students already on the assignment keep the score recorded against them,
+and **a student removed from the list has their grade row deleted, score and
+all**. Unassigning is destructive by design, the alternative being an orphan
+score for work the student is no longer doing.
 
-**Success Response (200 OK):**
-```json
-{
-  "success": true,
-  "data": {
-    "id": "uuid-assign-1",
-    "title": "Fractions Worksheet #1 (Revised)",
-    "due_date": "2025-11-22T23:59:59Z",
-    "completion_status": "in_progress",
-    "grade": "A-",
-    "points_earned": 92.5,
-    "updated_at": "2025-11-14T16:30:00Z"
-  }
-}
-```
+Omitting `student_ids` leaves the assigned set alone. Note that an empty array
+only survives a JSON body: form encoding drops it, so a form encoded empty
+array reads as "no change" rather than "remove everyone".
 
 ---
 
-### 5. Mark Assignment Complete
-
-Mark an assignment as completed.
-
-**Endpoint:** `PATCH /assignments/{assignment_id}/complete`
-
-**Authentication:** Required
-
-**Request Body:**
-```json
-{
-  "completed_date": "2025-11-18T14:30:00Z",
-  "grade": "A",
-  "points_earned": 98,
-  "notes": "Excellent work!"
-}
-```
-
-**Success Response (200 OK):**
-```json
-{
-  "success": true,
-  "data": {
-    "id": "uuid-assign-1",
-    "completion_status": "completed",
-    "completed_date": "2025-11-18T14:30:00Z",
-    "grade": "A",
-    "points_earned": 98
-  }
-}
-```
-
----
-
-### 6. Delete Assignment
-
-Delete an assignment.
+### 5. Delete Assignment
 
 **Endpoint:** `DELETE /assignments/{assignment_id}`
 
 **Authentication:** Required
 
+A hard delete, taking its grade rows with it.
+
 **Success Response (204 No Content)**
 
 ---
 
-### 7. Upload Assignment Attachment
+### 6. Get Grades for an Assignment
 
-Upload a file attachment to an assignment.
-
-**Endpoint:** `POST /assignments/{assignment_id}/attachments`
+**Endpoint:** `GET /assignments/{assignment_id}/grades`
 
 **Authentication:** Required
 
-**Content-Type:** `multipart/form-data`
+The same grade objects nested in the assignment payload.
+
+---
+
+### 7. Record a Score
+
+**Endpoint:** `PATCH /assignments/{assignment_id}/grades/{grade_id}`
+
+**Authentication:** Required
 
 **Request Body:**
+```json
+{ "points_earned": 18, "notes": "Neat working" }
 ```
-file: [file] (PDF, DOCX, images, max 10MB)
+
+**Accepted fields:** `points_earned`, `notes`. Which students have the
+assignment is set through the assignment's `student_ids`, so there is one way
+to do each thing: this endpoint only records marks.
+
+- `points_earned` null puts the work back to unmarked and clears `graded_at`,
+  which takes it out of every average again
+- `points_earned` 0 is a real score of zero and does count
+- A score above `points_possible` is accepted: that is extra credit, and
+  capping it silently would lose marks
+- `graded_at` is set by the server when a score is first entered and is not
+  moved by a later correction
+
+---
+
+### 8. Student Progress, the weighted roll up
+
+**Endpoint:** `GET /students/{student_id}/progress?from=&to=`
+
+**Authentication:** Required
+
+The auto-calculated weighted grades the marketing copy promises, per subject
+over a period.
+
+**Query Parameters:** `from` and `to`, both **required**, `YYYY-MM-DD`,
+inclusive. A roll up with no period is not a report, and defaulting to all time
+would quietly answer a different question. `to` before `from` is a 422.
+
+**The calculation:**
+
 ```
+percentage = sum(weight * points_earned / points_possible) / sum(weight)
+```
+
+A weighted mean of each assignment's own percentage, not of raw points. The two
+differ: adding points up means a 100 point exam already outweighs a 10 point
+quiz ten to one whether the teacher meant it to or not. Weighting percentages
+separates what the work is out of from how much it counts.
+
+**What is included:**
+- Assignments with a `due_date` inside the period. Undated work belongs to no
+  period and is excluded
+- Only grade rows belonging to this student
+- Only marked work. An assignment the student has but that is unmarked is
+  excluded rather than scored zero, so a report part way through a term
+  reflects what has actually been marked. `assigned_count`, `graded_count` and
+  `ungraded_count` are all reported so the reader can see what the figure covers
+- Work weighted 0 contributes to neither side of the sum
+
+**No grade rather than zero.** When nothing is marked, or every weight in a
+subject is 0, `percentage` and `letter` come back null. Dividing either case
+would invent a grade of 0% for a student who simply has not been marked.
+
+**Letters:** 90/80/70/60 on the weighted percentage, derived on read. Per
+teacher scales are not built.
+
+**Overall** applies the same formula across every subject at once rather than
+averaging the subject averages: there is no "how much does this subject count"
+anywhere in the schema, and inventing one here would be a second weighting
+concept the teacher never set.
 
 **Success Response (200 OK):**
 ```json
 {
   "success": true,
   "data": {
-    "attachment": {
-      "name": "worksheet.pdf",
-      "url": "https://storage.example.com/assignments/worksheet.pdf",
-      "type": "pdf",
-      "size": 245678,
-      "uploaded_at": "2025-11-14T16:00:00Z"
+    "student_id": "uuid-student-eliza",
+    "from": "2026-09-01",
+    "to": "2026-09-30",
+    "subjects": [
+      {
+        "subject_id": "uuid-subject-math",
+        "subject_name": "Math",
+        "assigned_count": 4,
+        "graded_count": 3,
+        "ungraded_count": 1,
+        "points_earned": "98.0",
+        "points_possible": "130.0",
+        "percentage": "75.0",
+        "letter": "C"
+      }
+    ],
+    "overall": {
+      "assigned_count": 5,
+      "graded_count": 4,
+      "ungraded_count": 1,
+      "points_earned": "193.0",
+      "points_possible": "230.0",
+      "percentage": "79.0",
+      "letter": "C"
     }
   }
 }
 ```
-
----
-
-### 8. Delete Assignment Attachment
-
-Delete a file attachment from an assignment.
-
-**Endpoint:** `DELETE /assignments/{assignment_id}/attachments/{attachment_id}`
-
-**Authentication:** Required
-
-**Success Response (204 No Content)**
 
 ---
 
@@ -1952,289 +1948,16 @@ than hidden.
 
 ## Report Card Endpoints
 
-### 1. Get All Report Cards
+**Not built.** The section that stood here described `period_type`,
+`grading_system`, a draft/finalized/published status, denormalized
+`subject_name`, and separate `letter_grade`, `percentage_grade` and
+`standards_rating` columns, none of which exists.
 
-Get report cards for authenticated teacher.
-
-**Endpoint:** `GET /report-cards`
-
-**Authentication:** Required
-
-**Query Parameters:**
-- `student_id` (optional): Filter by student
-- `period_type` (optional): Filter by period type
-- `status` (optional): Filter by status (draft, finalized, published)
-- `year` (optional): Filter by year
-- `page` (optional): Page number (default: 1)
-- `limit` (optional): Items per page (default: 20)
-
-**Example Request:**
-```http
-GET /report-cards?student_id=uuid-456&status=finalized
-```
-
-**Success Response (200 OK):**
-```json
-{
-  "success": true,
-  "data": [
-    {
-      "id": "uuid-rc-1",
-      "student_id": "uuid-456",
-      "student_name": "Emma Johnson",
-      "teacher_id": "uuid-123",
-      "title": "Q1 2025 Report Card",
-      "period_type": "quarterly",
-      "start_date": "2025-09-01",
-      "end_date": "2025-11-30",
-      "grading_system": "letter",
-      "status": "finalized",
-      "overall_comments": "Excellent progress this quarter!",
-      "created_at": "2025-11-01T10:00:00Z",
-      "updated_at": "2025-11-14T15:00:00Z",
-      "published_at": "2025-11-14T15:00:00Z"
-    }
-  ],
-  "meta": {
-    "page": 1,
-    "limit": 20,
-    "total": 1
-  }
-}
-```
-
----
-
-### 2. Get Single Report Card
-
-Get details for a specific report card with all entries.
-
-**Endpoint:** `GET /report-cards/{report_card_id}`
-
-**Authentication:** Required
-
-**Success Response (200 OK):**
-```json
-{
-  "success": true,
-  "data": {
-    "id": "uuid-rc-1",
-    "student_id": "uuid-456",
-    "student_name": "Emma Johnson",
-    "teacher_id": "uuid-123",
-    "title": "Q1 2025 Report Card",
-    "period_type": "quarterly",
-    "start_date": "2025-09-01",
-    "end_date": "2025-11-30",
-    "grading_system": "letter",
-    "status": "finalized",
-    "overall_comments": "Excellent progress this quarter!",
-    "entries": [
-      {
-        "id": "uuid-entry-1",
-        "report_card_id": "uuid-rc-1",
-        "subject_id": "uuid-subject-1",
-        "subject_name": "Mathematics",
-        "letter_grade": "A",
-        "percentage_grade": null,
-        "standards_rating": null,
-        "comments": "Excellent understanding of fractions and decimals",
-        "created_at": "2025-11-14T14:00:00Z",
-        "updated_at": "2025-11-14T14:30:00Z"
-      },
-      {
-        "id": "uuid-entry-2",
-        "report_card_id": "uuid-rc-1",
-        "subject_id": "uuid-subject-2",
-        "subject_name": "Science",
-        "letter_grade": "A-",
-        "percentage_grade": null,
-        "standards_rating": null,
-        "comments": "Strong lab skills and scientific thinking",
-        "created_at": "2025-11-14T14:00:00Z",
-        "updated_at": "2025-11-14T14:30:00Z"
-      }
-    ],
-    "created_at": "2025-11-01T10:00:00Z",
-    "updated_at": "2025-11-14T15:00:00Z",
-    "published_at": "2025-11-14T15:00:00Z"
-  }
-}
-```
-
----
-
-### 3. Create Report Card
-
-Create a new report card.
-
-**Endpoint:** `POST /report-cards`
-
-**Authentication:** Required
-
-**Request Body:**
-```json
-{
-  "student_id": "uuid-456",
-  "title": "Q2 2025 Report Card",
-  "period_type": "quarterly",
-  "start_date": "2025-12-01",
-  "end_date": "2026-02-28",
-  "grading_system": "letter",
-  "overall_comments": "Looking forward to continued growth"
-}
-```
-
-**Validation Rules:**
-- `student_id`: Required, valid student ID
-- `title`: Required, max 255 characters
-- `period_type`: Required, one of: weekly, monthly, quarterly, semester, annual, custom
-- `start_date`: Required, valid date (YYYY-MM-DD)
-- `end_date`: Required, valid date, must be after start_date
-- `grading_system`: Required, one of: letter, percentage, standards
-
-**Success Response (201 Created):**
-```json
-{
-  "success": true,
-  "data": {
-    "id": "uuid-rc-2",
-    "student_id": "uuid-456",
-    "teacher_id": "uuid-123",
-    "title": "Q2 2025 Report Card",
-    "period_type": "quarterly",
-    "start_date": "2025-12-01",
-    "end_date": "2026-02-28",
-    "grading_system": "letter",
-    "status": "draft",
-    "created_at": "2025-11-14T16:00:00Z"
-  }
-}
-```
-
----
-
-### 4. Update Report Card
-
-Update report card information.
-
-**Endpoint:** `PUT /report-cards/{report_card_id}`
-
-**Authentication:** Required
-
-**Request Body:**
-```json
-{
-  "title": "Q2 2025 Report Card (Updated)",
-  "overall_comments": "Strong academic progress this quarter",
-  "status": "finalized"
-}
-```
-
-**Success Response (200 OK):**
-```json
-{
-  "success": true,
-  "data": {
-    "id": "uuid-rc-2",
-    "title": "Q2 2025 Report Card (Updated)",
-    "overall_comments": "Strong academic progress this quarter",
-    "status": "finalized",
-    "published_at": "2025-11-14T16:30:00Z",
-    "updated_at": "2025-11-14T16:30:00Z"
-  }
-}
-```
-
----
-
-### 5. Add/Update Report Card Entry
-
-Add or update a subject entry in a report card.
-
-**Endpoint:** `POST /report-cards/{report_card_id}/entries`
-
-**Authentication:** Required
-
-**Request Body:**
-```json
-{
-  "subject_id": "uuid-subject-1",
-  "subject_name": "Mathematics",
-  "letter_grade": "A",
-  "percentage_grade": null,
-  "standards_rating": null,
-  "comments": "Excellent understanding of fractions and decimals"
-}
-```
-
-**Validation Rules:**
-- `subject_name`: Required, max 100 characters
-- `letter_grade`: Optional, max 5 characters (for letter grading system)
-- `percentage_grade`: Optional, 0-100 (for percentage grading system)
-- `standards_rating`: Optional, max 50 characters (for standards-based grading)
-
-**Success Response (201 Created):**
-```json
-{
-  "success": true,
-  "data": {
-    "id": "uuid-entry-1",
-    "report_card_id": "uuid-rc-1",
-    "subject_id": "uuid-subject-1",
-    "subject_name": "Mathematics",
-    "letter_grade": "A",
-    "comments": "Excellent understanding of fractions and decimals",
-    "created_at": "2025-11-14T16:00:00Z"
-  }
-}
-```
-
----
-
-### 6. Delete Report Card Entry
-
-Delete a subject entry from a report card.
-
-**Endpoint:** `DELETE /report-cards/{report_card_id}/entries/{entry_id}`
-
-**Authentication:** Required
-
-**Success Response (204 No Content)**
-
----
-
-### 7. Delete Report Card
-
-Delete an entire report card.
-
-**Endpoint:** `DELETE /report-cards/{report_card_id}`
-
-**Authentication:** Required
-
-**Success Response (204 No Content)**
-
----
-
-### 8. Generate Report Card PDF
-
-Generate a PDF version of the report card.
-
-**Endpoint:** `POST /report-cards/{report_card_id}/pdf`
-
-**Authentication:** Required
-
-**Success Response (200 OK):**
-```json
-{
-  "success": true,
-  "data": {
-    "pdf_url": "https://storage.example.com/report-cards/uuid-rc-1.pdf",
-    "generated_at": "2025-11-14T16:00:00Z",
-    "expires_at": "2025-11-21T16:00:00Z"
-  }
-}
-```
+What does exist is the live calculation behind them: see **Student Progress**
+under Assignment Endpoints, which returns the per subject weighted roll up over
+any date range. A persisted report card is a snapshot of that plus a title,
+notes and an issued timestamp, and it is the next slice of this work rather
+than something already shipped.
 
 ---
 

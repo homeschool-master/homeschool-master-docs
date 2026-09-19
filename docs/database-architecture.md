@@ -321,38 +321,75 @@ This document defines the database architecture for a homeschool management mobi
 
 ### 7. Assignments
 
-**Purpose:** Track student assignments and homework
+**Purpose:** A piece of work in a subject, given to one or more students
 
 | Column Name | Data Type | Constraints | Description |
 |------------|-----------|-------------|-------------|
-| id | UUID/INT | PRIMARY KEY | Unique identifier |
-| student_id | UUID/INT | FOREIGN KEY, NOT NULL | Reference to Students |
-| teacher_id | UUID/INT | FOREIGN KEY, NOT NULL | Reference to Teachers |
-| subject_id | UUID/INT | FOREIGN KEY, NULL | Reference to Subjects |
-| calendar_event_id | UUID/INT | FOREIGN KEY, NULL | Optional link to calendar event |
-| title | VARCHAR(255) | NOT NULL | Assignment title |
-| description | TEXT | NULL | Assignment details/instructions |
-| due_date | TIMESTAMP | NULL | Optional due date |
-| assigned_date | DATE | NOT NULL | Date assignment was given |
-| completion_status | ENUM | DEFAULT 'not_started' | 'not_started', 'in_progress', 'completed', 'overdue' |
-| completed_date | TIMESTAMP | NULL | When student completed it |
-| grade | VARCHAR(10) | NULL | Grade received (flexible format) |
-| points_earned | DECIMAL(10,2) | NULL | Points received |
-| points_possible | DECIMAL(10,2) | NULL | Total points possible |
-| notes | TEXT | NULL | Teacher notes |
-| attachments | JSON | NULL | Array of attachment URLs/references |
-| created_at | TIMESTAMP | DEFAULT NOW() | Record creation date |
-| updated_at | TIMESTAMP | DEFAULT NOW() | Last update timestamp |
+| id | UUID | PRIMARY KEY | Unique identifier |
+| teacher_id | UUID | FOREIGN KEY, NOT NULL | Reference to Teachers |
+| subject_id | UUID | FOREIGN KEY, NOT NULL | Reference to Subjects |
+| title | VARCHAR | NOT NULL | Assignment title |
+| description | TEXT | NULL | Instructions |
+| due_date | DATE | NULL | Optional due date |
+| points_possible | DECIMAL(10,2) | NOT NULL, DEFAULT 100 | What the work is out of, greater than zero |
+| weight | DECIMAL(10,2) | NOT NULL, DEFAULT 1 | How much it counts, zero or greater |
+| created_at | TIMESTAMP | NOT NULL | Record creation date |
+| updated_at | TIMESTAMP | NOT NULL | Last update timestamp |
+
+**Notes on `assignments`:**
+- **There is no `student_id` here.** This table previously had one, NOT NULL,
+  alongside `calendar_event_id`, `completion_status`, `completed_date`,
+  `assigned_date`, `attachments`, and `grade`, `points_earned` and
+  `points_possible` all on the assignment. None of that was built, and it could
+  not all have been: one assignment given to three students cannot carry one
+  score. Students reach an assignment through Assignment_Grades.
+- No link to Calendar_Events. An assignment does not create or reference an
+  event.
+- `weight` is what makes a report card weighted: an exam at weight 3 counts
+  three times a quiz at weight 1, independently of what each is out of.
+- `subject_id` is required, and Subjects soft delete, so the reference never
+  dangles and an assignment's history survives its subject being removed.
 
 **Indexes:**
 - PRIMARY KEY on `id`
+- FOREIGN KEY on `teacher_id` REFERENCES Teachers(id)
+- FOREIGN KEY on `subject_id` REFERENCES Subjects(id)
+- INDEX on `(teacher_id, due_date)`
+
+---
+
+### 7a. Assignment_Grades
+
+**Purpose:** One student's standing on one assignment
+
+| Column Name | Data Type | Constraints | Description |
+|------------|-----------|-------------|-------------|
+| id | UUID | PRIMARY KEY | Unique identifier |
+| assignment_id | UUID | FOREIGN KEY, NOT NULL | Reference to Assignments |
+| student_id | UUID | FOREIGN KEY, NOT NULL | Reference to Students |
+| points_earned | DECIMAL(10,2) | NULL | Score. NULL means unmarked, which is not zero |
+| notes | TEXT | NULL | Teacher notes on this student's work |
+| graded_at | TIMESTAMP | NULL | When the score was first entered |
+| created_at | TIMESTAMP | NOT NULL | Record creation date |
+| updated_at | TIMESTAMP | NOT NULL | Last update timestamp |
+
+**Notes on `assignment_grades`:**
+- The row existing means the student has been given the work. There is no
+  separate join table: this row is both the assignment of the work and the
+  score for it.
+- `points_earned` NULL is excluded from every average. An explicit 0 is a real
+  score and counts. That distinction is the difference between a report part
+  way through a term and one that punishes work not yet marked.
+- A score above `points_possible` is allowed: extra credit.
+- Percentages and letter grades are derived on read, never stored, so a grade
+  cannot be invalidated by changing the letter scale.
+
+**Indexes:**
+- PRIMARY KEY on `id`
+- FOREIGN KEY on `assignment_id` REFERENCES Assignments(id) ON DELETE CASCADE
 - FOREIGN KEY on `student_id` REFERENCES Students(id) ON DELETE CASCADE
-- FOREIGN KEY on `teacher_id` REFERENCES Teachers(id) ON DELETE CASCADE
-- FOREIGN KEY on `subject_id` REFERENCES Subjects(id) ON DELETE SET NULL
-- FOREIGN KEY on `calendar_event_id` REFERENCES Calendar_Events(id) ON DELETE SET NULL
+- UNIQUE INDEX on `(assignment_id, student_id)`
 - INDEX on `student_id`
-- INDEX on `due_date`
-- INDEX on `completion_status`
 
 ---
 
@@ -395,6 +432,11 @@ This document defines the database architecture for a homeschool management mobi
 
 ### 9. Report_Cards
 
+**Not built.** Report cards are the next slice. The weighted calculation
+they roll up already exists: see Assignment_Grades and the progress endpoint.
+The columns below have never been created and disagree with the implementation
+guide on names and on which fields exist.
+
 **Purpose:** Store report card periods and configurations
 
 | Column Name | Data Type | Constraints | Description |
@@ -423,6 +465,11 @@ This document defines the database architecture for a homeschool management mobi
 ---
 
 ### 10. Report_Card_Entries
+
+**Not built.** Report cards are the next slice. The weighted calculation
+they roll up already exists: see Assignment_Grades and the progress endpoint.
+The columns below have never been created and disagree with the implementation
+guide on names and on which fields exist.
 
 **Purpose:** Individual subject grades within a report card
 
